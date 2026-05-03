@@ -1,0 +1,48 @@
+# Ignore environment variables
+.env
+.env.local
+.env.*.local
+
+# Ignore .env files in backend and frontend subdirectories
+/backend/.env
+/frontend/.env
+
+# Ignore Node.js modules for the root project
+/node_modules/
+
+# Ignore Node.js modules for the backend
+/backend/node_modules/
+
+# Ignore Node.js modules for the frontend
+/frontend/node_modules/
+
+# Ignore package-lock.json (if you prefer to only track package.json)
+# For most projects, it's recommended to commit package-lock.json (or yarn.lock).
+# If you want to ignore it, uncomment the line below:
+# package-lock.json
+
+# Ignore build artifacts for frontend (common for React, Vue, Angular etc.)
+/frontend/build/
+/frontend/dist/
+/frontend/out/
+
+# Ignore compiled TypeScript files (if you're compiling TS to JS in place)
+# This usually applies more to backend if you're not using a bundler for frontend output
+*.js.map
+# *.d.ts # Don't ignore if you need to publish types or if your build process requires them
+
+# Ignore editor/IDE specific files
+.vscode/ # VS Code settings
+.idea/   # IntelliJ IDEA settings
+*.sublime-project
+*.sublime-workspace
+.DS_Store # macOS specific files
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS generated files
+Thumbs.db # Windows

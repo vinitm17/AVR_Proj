@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
+    "framer-motion": "^12.19.1",
+    "tabler-icons-react": "^1.56.0"
+  },
+  "devDependencies": {
+    "@types/dotenv": "^6.1.1"
+  }
+}

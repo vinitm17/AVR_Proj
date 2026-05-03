@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../dist/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role{
+  OEM
+  Reseller
+  Operator
+  EndUser
+}
+
+enum TransactionStatus{
+  PENDING
+  SUCCESS
+  FAILED  
+}
+
+enum QueueStatus{
+  WAITING
+  NOTIFIED
+  CANCELLED
+}
+
+//sessions, transactions, 
+model User{
+  id Int @id @unique @default(autoincrement())
+  firstName String
+  lastName String
+  email String @unique
+  password String
+  role Role
+
+  linkedOEM Int? //id of the OEM, the reseller is connected through
+  linkedReseller Int? //id of the reseller, the operator is connected through
+  linkedOperator Int? //id of the operator, the end-user is connected through
+
+  points BigInt?
+  vehicle String?
+
+  gstNumber String? //only for reseller and operator(cuz they run businesses)
+
+  ownedStations chargingStation[] @relation("stationOEM")  
+  reselledStations chargingStation[] @relation("stationReseller")
+  operatedStations chargingStation[] @relation("stationOperator")
+  previuoslyConnectedStatoins chargingStation[] @relation("asEndUser")
+  //inherently optional , cuz what if the user is End-User
+
+  session Sessions[] //history of chargings
+  transaction Transactions[]
+  stationQueues StationQueue[]
+}
+
+model chargingStation{
+  id Int @id @unique @default(autoincrement()) //CID
+  location String
+
+  OEM User @relation("stationOEM", fields: [OEMId], references: [id])
+  OEMId Int
+  reseller User  @relation("stationReseller", fields: [resellerId], references: [id])
+  resellerId Int
+  operator User @relation("stationOperator" , fields: [operatorId], references: [id])
+  operatorId Int 
+  connectedUser User? @relation("asEndUser", fields: [connectedUserID], references: [id])
+  connectedUserID Int?
+
+  totalEnergyConsumption BigInt
+  healthPercentage Int
+  isOccupied Boolean  
+  isActive Boolean
+  isFaulty Boolean
+
+  session Sessions[] 
+  queue StationQueue[]
+}
+
+model Sessions{
+  id Int @id @unique @default(autoincrement())
+  createdAt DateTime @default(now())
+  totalTime String
+  isActive Boolean
+  location String
+  estimatedDuration Int?  // estimated charging duration in minutes
+
+  chargingStation chargingStation @relation(fields: [stationId], references: [id])
+  stationId Int 
+
+  User User @relation(fields: [userId], references: [id])
+  userId Int //relation with user (for tracking cars and points)
+
+  transactionID String? //transactionId of payment (razorpay or something like that)  | optoinal cuz end user might already have coins
+
+  pointsUsed BigInt @default(0)
+  energyConsumption Float @default(0.0)
+}
+
+model Transactions{
+  id Int @id @unique @default(autoincrement())
+  transactionId String //this id is from payment methods like gpay etc
+  createdAt DateTime @default(now())
+  status TransactionStatus @default(PENDING)
+
+  user User @relation(fields: [userId], references: [id])
+  userId Int
+
+  coinsPurchased BigInt
+  amountPaid Float
+}
+
+model StationQueue{
+  id        Int         @id @unique @default(autoincrement())
+  createdAt DateTime    @default(now())
+
+  station   chargingStation @relation(fields: [stationId], references: [id])
+  stationId Int
+
+  user      User @relation(fields: [userId], references: [id])
+  userId    Int
+
+  position  Int
+  status    QueueStatus @default(WAITING)
+
+  @@unique([stationId, userId])
+}
