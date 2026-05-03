@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
 import SignUp from "./pages/SignUp";
 import SignIn from "./pages/SignIn";
 import Home from "./pages/Home";
@@ -9,20 +8,12 @@ import HistoryPage from "./pages/History";
 import Start from "./pages/Start";
 import OperatorDashboard from "./pages/OperatorDashboard";
 import Profile from "./pages/Profile";
+import { Toaster } from "sonner";
 
 function App() {
-  const [token, setToken] = useState<string | null>(null);
-  
-
-
-  // Check token on app load
-  useEffect(() => {
-    const storedToken = localStorage.getItem("token");
-    setToken(storedToken);
-  }, []);
-
   return (
     <BrowserRouter>
+      <Toaster richColors position="top-right" />
       <Routes>
         <Route path="/signup" element={<SignUp />} />
         <Route path="/signin" element={<SignIn />} />

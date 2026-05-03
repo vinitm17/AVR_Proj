@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { MapPin, Zap, AlertTriangle, CheckCircle, XCircle, ArrowLeft, Battery, Clock, Search, Filter, Users, Timer, Bell } from "lucide-react";
+import { MapPin, Zap, AlertTriangle, CheckCircle, XCircle, ArrowLeft, Battery, Clock, Search, Filter, Users, Timer, Bell, Navigation, LocateFixed } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import Modal from "@/components/ui/Modal";
+import { toast } from "sonner";
 
 interface ActiveSessionInfo {
   startTime: string;
@@ -38,7 +39,14 @@ interface Station {
   activeSession: ActiveSessionInfo | null;
   isCurrentUserCharging: boolean;
   queue: QueueInfo;
+  latitude?: number;
+  longitude?: number;
+  mapIframe?: string;
 }
+
+type RawStation = Omit<Station, "city"> & {
+  city?: string;
+};
 
 interface ApiError {
   response?: {
@@ -52,8 +60,9 @@ interface StationDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   station: Station | null;
+  userLocation: UserLocation | null;
   userData: UserData | null;
-  onStartCharging: (stationId: number, pointsToUse: number) => void;
+  onStartCharging: (stationId: number, pointsToUse: number) => Promise<void>;
   onStopCharging: (stationId: number) => void;
   onJoinQueue: (stationId: number) => void;
   onLeaveQueue: (stationId: number) => void;
@@ -70,6 +79,154 @@ interface UserData {
   points: string;
 }
 
+interface UserLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  source?: "browser" | "manual";
+}
+
+type StationWithDistance = Station & {
+  distanceKm: number | null;
+  readinessMinutes: number;
+  nearbyScore: number;
+};
+
+const AVERAGE_CITY_SPEED_KMPH = 20;
+const SOON_FREE_MINUTES = 15;
+const TARGET_LOCATION_ACCURACY_METERS = 75;
+const MAX_USABLE_LOCATION_ACCURACY_METERS = 1500;
+const PRECISE_LOCATION_TIMEOUT_MS = 20000;
+
+const STATION_MAP_OVERRIDES: Record<string, Pick<Station, "latitude" | "longitude" | "mapIframe">> = {
+  "Downtown Mall - Parking Level B1": {
+    latitude: 16.8472558,
+    longitude: 74.5987356,
+    mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d432.8030714416994!2d74.59873562066275!3d16.84725578534954!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc123007d046a15%3A0x51abb635d9ba80a0!2sEffotel%20by%20Sayaji%2C%20Sangli!5e0!3m2!1sen!2sin!4v1777801055197!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
+  },
+  "Airport Terminal 2 - Ground Floor": {
+    latitude: 16.865268,
+    longitude: 74.5909501,
+    mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d238.63842201666768!2d74.5909501303994!3d16.865267967468114!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc1180acf8cbd2f%3A0x8a37f1372dc62bd3!2sVraj%20Technologies%20Charging%20Station!5e0!3m2!1sen!2sin!4v1777801198980!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
+  },
+  "Highway Service Station - Exit 15": {
+    latitude: 16.8652679,
+    longitude: 74.5885361,
+    mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.214753241584!2d74.58853613886272!3d16.865267919212357!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc1192fc537db45%3A0xf16ce72abb35dd73!2sKrishna%20godavari%20ev%20charging%20station!5e0!3m2!1sen!2sin!4v1777801255281!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
+  },
+  "Office Complex - Basement Parking": {
+    latitude: 16.8429686,
+    longitude: 74.6116278,
+    mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.6649728327634!2d74.60905287604193!3d16.842968583954345!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc119755cbdb9ad%3A0x4e5cf9d3e94caf88!2sJIMIS%20BURGER%20%C2%AE%20-%20Sangli!5e0!3m2!1sen!2sin!4v1777801303378!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
+  },
+  "Shopping Center - Rooftop Level": {
+    latitude: 19.166445,
+    longitude: 72.936014,
+    mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m14!1m8!1m3!1d60298.52692515201!2d72.936014!3d19.166445!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3be7b913585fc533%3A0x4c5fa5cf22f5bd5d!2sPiramal%20Revanta%20Sales%20Office!5e0!3m2!1sen!2sin!4v1732468527570!5m2!1sen!2sin" width="100%" height="450" loading="lazy" referrerpolicy="no-referrer-when-downgrade" style="border: 0px;"></iframe>`,
+  },
+};
+
+const getDistanceKm = (
+  from: Pick<UserLocation, "latitude" | "longitude">,
+  to: Pick<UserLocation, "latitude" | "longitude">
+) => {
+  const earthRadiusKm = 6371;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const latDelta = toRadians(to.latitude - from.latitude);
+  const lonDelta = toRadians(to.longitude - from.longitude);
+  const lat1 = toRadians(from.latitude);
+  const lat2 = toRadians(to.latitude);
+
+  const a =
+    Math.sin(latDelta / 2) * Math.sin(latDelta / 2) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(lonDelta / 2) * Math.sin(lonDelta / 2);
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const formatDistance = (distanceKm: number | null) => {
+  if (distanceKm === null) return "Distance unavailable";
+  if (distanceKm < 1) return `${Math.round(distanceKm * 1000)} m away`;
+  return `${distanceKm.toFixed(1)} km away`;
+};
+
+const getReadinessMinutes = (station: Station) => {
+  if (!station.isActive || station.isFaulty) return Number.POSITIVE_INFINITY;
+  if (!station.isOccupied) return 0;
+  return station.activeSession?.minutesRemaining ?? Number.POSITIVE_INFINITY;
+};
+
+const getReadinessText = (station: Station) => {
+  if (station.isFaulty) return "Faulty";
+  if (!station.isActive) return "Inactive";
+  if (!station.isOccupied) return "Available now";
+  const minutesRemaining = station.activeSession?.minutesRemaining;
+  if (minutesRemaining === null || minutesRemaining === undefined) return "Busy, free time unknown";
+  if (minutesRemaining <= 0) return "Free any moment";
+  return `Busy, free in ~${minutesRemaining} min`;
+};
+
+const extractMapIframeSrc = (mapIframe?: string) => {
+  if (!mapIframe) return undefined;
+  const match = mapIframe.match(/src\s*=\s*"([^"]+)"/i);
+  return match ? match[1] : mapIframe;
+};
+
+const parseManualLocation = (value: string) => {
+  const decodedValue = decodeURIComponent(value.trim());
+  const atMatch = decodedValue.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
+  const bangLatLngMatch = decodedValue.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  const bangLngLatMatch = decodedValue.match(/!2d(-?\d+(?:\.\d+)?)!3d(-?\d+(?:\.\d+)?)/);
+  const pairMatch = decodedValue.match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/);
+
+  let latitude: number;
+  let longitude: number;
+
+  if (atMatch) {
+    latitude = Number(atMatch[1]);
+    longitude = Number(atMatch[2]);
+  } else if (bangLatLngMatch) {
+    latitude = Number(bangLatLngMatch[1]);
+    longitude = Number(bangLatLngMatch[2]);
+  } else if (bangLngLatMatch) {
+    latitude = Number(bangLngLatMatch[2]);
+    longitude = Number(bangLngLatMatch[1]);
+  } else if (pairMatch) {
+    latitude = Number(pairMatch[1]);
+    longitude = Number(pairMatch[2]);
+  } else {
+    return null;
+  }
+
+  if (
+    Number.isNaN(latitude) ||
+    Number.isNaN(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null;
+  }
+
+  return { latitude, longitude };
+};
+
+const buildMapSrc = (station: Station, userLocation: UserLocation | null) => {
+  if (
+    userLocation &&
+    typeof station.latitude === "number" &&
+    typeof station.longitude === "number"
+  ) {
+    const origin = `${userLocation.latitude},${userLocation.longitude}`;
+    const destination = `${station.latitude},${station.longitude}`;
+    return `https://maps.google.com/maps?saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destination)}&dirflg=d&output=embed`;
+  }
+
+  return extractMapIframeSrc(station.mapIframe);
+};
+
 export default function StationsPage() {
   const [stations, setStations] = useState<Station[]>([]);
   const [filteredStations, setFilteredStations] = useState<Station[]>([]);
@@ -84,18 +241,24 @@ export default function StationsPage() {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [selectedStation, setSelectedStation] = useState<Station | null>(null);
   const [stationModalOpen, setStationModalOpen] = useState(false);
-  const [pointsToUse, setPointsToUse] = useState<number>(10);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState("");
+  const [nearestMode, setNearestMode] = useState(false);
+  const [manualLocationOpen, setManualLocationOpen] = useState(false);
+  const [manualLocationInput, setManualLocationInput] = useState("");
   const navigate = useNavigate();
 
   const fetchStations = useCallback(async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const response = await api.get("/get/stations");
+      const response = await api.get<{ stations: RawStation[] }>("/get/stations");
       
-      const enhancedStations = response.data.stations.map((station: any) => {
+      const enhancedStations = response.data.stations.map((station) => {
         const locationParts = station.location.split('-');
         const city = locationParts.length > 1 ? locationParts[1].trim() : station.location;
-        return { ...station, city };
+        const mapOverride = STATION_MAP_OVERRIDES[station.location] ?? {};
+        return { ...station, ...mapOverride, city };
       });
       
       setStations(enhancedStations);
@@ -171,12 +334,15 @@ export default function StationsPage() {
   const fetchUserData = async () => {
     try {
       const response = await api.get("/get/dashboard");
+      const localPoints = Number(localStorage.getItem("localPoints") || 0);
+      const apiPoints = Number(response.data.data.totalPoints || 0);
+      const effectivePoints = Math.max(apiPoints, localPoints);
       setUserData({
         id: response.data.data.userId,
         firstName: response.data.data.userName.split(' ')[0],
         lastName: response.data.data.userName.split(' ')[1] || '',
         email: response.data.data.email,
-        points: response.data.data.totalPoints
+        points: effectivePoints.toString()
       });
     } catch (err) {
       console.error("Error fetching user data:", err);
@@ -195,10 +361,13 @@ export default function StationsPage() {
       // Update user data with reduced points
       if (userData && customPoints) {
         const currentPoints = parseInt(userData.points);
+        const localPoints = Number(localStorage.getItem("localPoints") || 0);
+        const updatedLocal = Math.max(0, localPoints - customPoints);
         setUserData({
           ...userData,
           points: (currentPoints - customPoints).toString()
         });
+        localStorage.setItem("localPoints", updatedLocal.toString());
       }
 
       // Fresh fetch so modal gets real activeSession + isCurrentUserCharging + estimated time
@@ -207,7 +376,8 @@ export default function StationsPage() {
     } catch (err: unknown) {
       console.error("Error starting charging:", err);
       const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to start charging. Please try again.";
-      alert(errorMessage);
+      toast.error(errorMessage);
+      throw err;
     } finally {
       setActionLoading(null);
     }
@@ -231,12 +401,14 @@ export default function StationsPage() {
 
       // Show success message with session details
       const sessionInfo = response.data;
-      alert(`Charging stopped!\nTime: ${sessionInfo.totalTime}\nCoins Used: ${sessionInfo.coinsUsed}`);
+      toast.success("Charging stopped!", {
+        description: `Time: ${sessionInfo.totalTime} · Coins Used: ${sessionInfo.coinsUsed}`,
+      });
       
     } catch (err: unknown) {
       console.error("Error stopping charging:", err);
       const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to stop charging. Please try again.";
-      alert(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setActionLoading(null);
     }
@@ -246,12 +418,12 @@ export default function StationsPage() {
     try {
       setQueueLoading(true);
       const response = await api.post("/post/joinQueue", { CID: stationId });
-      alert(response.data.msg);
+      toast.success(response.data.msg || "Joined the queue successfully");
       await fetchStations(true);
     } catch (err: unknown) {
       console.error("Error joining queue:", err);
       const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to join queue.";
-      alert(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setQueueLoading(false);
     }
@@ -261,16 +433,207 @@ export default function StationsPage() {
     try {
       setQueueLoading(true);
       const response = await api.post("/post/leaveQueue", { CID: stationId });
-      alert(response.data.msg);
+      toast.success(response.data.msg || "Left the queue successfully");
       await fetchStations(true);
     } catch (err: unknown) {
       console.error("Error leaving queue:", err);
       const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to leave queue.";
-      alert(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setQueueLoading(false);
     }
   };
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      const message = "Location is not supported by this browser.";
+      setLocationError(message);
+      toast.error(message);
+      return;
+    }
+
+    setLocationLoading(true);
+    setLocationError("");
+
+    let bestPosition: GeolocationPosition | null = null;
+    let finished = false;
+    let watchId: number | null = null;
+
+    const finishLocationSearch = (position: GeolocationPosition | null, precise: boolean) => {
+      if (finished) return;
+      finished = true;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+      if (!position || position.coords.accuracy > MAX_USABLE_LOCATION_ACCURACY_METERS) {
+        const accuracyText = position ? ` The browser only gave ~${Math.round(position.coords.accuracy)} m accuracy.` : "";
+        const message = `Could not get a precise enough location.${accuracyText} Turn on device location/GPS, disable VPN if active, and try again.`;
+        setLocationError(message);
+        setLocationLoading(false);
+        setManualLocationOpen(true);
+        toast.error("Precise location unavailable", {
+          description: "Paste a Google Maps pin or lat,lng to set it manually.",
+        });
+        return;
+      }
+
+      setUserLocation({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        source: "browser",
+      });
+      setNearestMode(true);
+      setLocationLoading(false);
+
+      if (precise) {
+        toast.success("Precise location detected", {
+          description: `Accuracy is about ${Math.round(position.coords.accuracy)} m.`,
+        });
+      } else {
+        const message = `Using the best location found, but accuracy is only about ${Math.round(position.coords.accuracy)} m.`;
+        setLocationError(message);
+        toast.warning("Location is approximate", {
+          description: "Move near a window or enable device GPS for a better route.",
+        });
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finishLocationSearch(bestPosition, false);
+    }, PRECISE_LOCATION_TIMEOUT_MS);
+
+    watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        if (
+          !bestPosition ||
+          position.coords.accuracy < bestPosition.coords.accuracy
+        ) {
+          bestPosition = position;
+        }
+
+        if (position.coords.accuracy <= TARGET_LOCATION_ACCURACY_METERS) {
+          window.clearTimeout(timeoutId);
+          finishLocationSearch(position, true);
+        }
+      },
+      (geoError) => {
+        window.clearTimeout(timeoutId);
+        const message =
+          geoError.code === geoError.PERMISSION_DENIED
+            ? "Location permission was denied. Please allow location access to find nearby stations."
+            : "Could not detect your location. Please try again.";
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+        setLocationError(message);
+        setLocationLoading(false);
+        setManualLocationOpen(true);
+        toast.error(message);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: PRECISE_LOCATION_TIMEOUT_MS,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handleManualLocationSubmit = () => {
+    const parsedLocation = parseManualLocation(manualLocationInput);
+
+    if (!parsedLocation) {
+      const message = "Paste coordinates like 16.8524, 74.5815 or a Google Maps link copied from your pin.";
+      setLocationError(message);
+      toast.error("Could not read that location", {
+        description: message,
+      });
+      return;
+    }
+
+    setUserLocation({
+      latitude: parsedLocation.latitude,
+      longitude: parsedLocation.longitude,
+      accuracy: 0,
+      source: "manual",
+    });
+    setNearestMode(true);
+    setLocationError("");
+    setManualLocationOpen(false);
+    toast.success("Manual location set", {
+      description: "Directions now use the coordinates you entered.",
+    });
+  };
+
+  const stationsWithDistance = useMemo<StationWithDistance[]>(() => {
+    return filteredStations.map((station) => {
+      const hasCoordinates =
+        typeof station.latitude === "number" &&
+        typeof station.longitude === "number";
+      const distanceKm =
+        userLocation && hasCoordinates
+          ? getDistanceKm(userLocation, {
+              latitude: station.latitude!,
+              longitude: station.longitude!,
+            })
+          : null;
+      const readinessMinutes = getReadinessMinutes(station);
+      const estimatedTravelMinutes =
+        distanceKm === null
+          ? Number.POSITIVE_INFINITY
+          : (distanceKm / AVERAGE_CITY_SPEED_KMPH) * 60;
+      const nearbyScore =
+        readinessMinutes === Number.POSITIVE_INFINITY || estimatedTravelMinutes === Number.POSITIVE_INFINITY
+          ? Number.POSITIVE_INFINITY
+          : estimatedTravelMinutes + readinessMinutes;
+
+      return {
+        ...station,
+        distanceKm,
+        readinessMinutes,
+        nearbyScore,
+      };
+    });
+  }, [filteredStations, userLocation]);
+
+  const displayStations = useMemo(() => {
+    if (!nearestMode || !userLocation) return stationsWithDistance;
+
+    return [...stationsWithDistance].sort((a, b) => {
+      if (a.nearbyScore !== b.nearbyScore) return a.nearbyScore - b.nearbyScore;
+      if (a.distanceKm === null && b.distanceKm === null) return a.id - b.id;
+      if (a.distanceKm === null) return 1;
+      if (b.distanceKm === null) return -1;
+      return a.distanceKm - b.distanceKm;
+    });
+  }, [nearestMode, stationsWithDistance, userLocation]);
+
+  const nearestAvailableStation = useMemo(() => {
+    if (!userLocation) return null;
+    return stationsWithDistance
+      .filter((station) => station.distanceKm !== null && station.isActive && !station.isFaulty && !station.isOccupied)
+      .sort((a, b) => (a.distanceKm ?? 0) - (b.distanceKm ?? 0))[0] ?? null;
+  }, [stationsWithDistance, userLocation]);
+
+  const nearbySoonStation = useMemo(() => {
+    if (!userLocation) return null;
+    return stationsWithDistance
+      .filter((station) =>
+        station.distanceKm !== null &&
+        station.isActive &&
+        !station.isFaulty &&
+        station.isOccupied &&
+        station.readinessMinutes <= SOON_FREE_MINUTES
+      )
+      .sort((a, b) => {
+        if (a.nearbyScore !== b.nearbyScore) return a.nearbyScore - b.nearbyScore;
+        return (a.distanceKm ?? 0) - (b.distanceKm ?? 0);
+      })[0] ?? null;
+  }, [stationsWithDistance, userLocation]);
+
+  const nearbyRecommendationStations = useMemo(() => {
+    const recommendations = [nearbySoonStation, nearestAvailableStation].filter(Boolean) as StationWithDistance[];
+    return recommendations.filter((station, index, list) =>
+      list.findIndex((candidate) => candidate.id === station.id) === index
+    );
+  }, [nearbySoonStation, nearestAvailableStation]);
 
   const getStatusColor = (station: Station) => {
     if (station.isFaulty) return "text-red-600 bg-red-100";
@@ -362,7 +725,7 @@ export default function StationsPage() {
             </div>
             <div className="flex items-center space-x-2 bg-blue-100 px-3 py-2 rounded-full">
               <Zap className="w-4 h-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-800">{filteredStations.length} Stations Found</span>
+              <span className="text-sm font-medium text-blue-800">{displayStations.length} Stations Found</span>
             </div>
           </div>
           
@@ -395,6 +758,43 @@ export default function StationsPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            <Button
+              className="flex-shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={handleUseMyLocation}
+              disabled={locationLoading}
+            >
+              {locationLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                  Detecting...
+                </>
+              ) : (
+                <>
+                  <LocateFixed className="w-4 h-4 mr-2" />
+                  {userLocation ? "Refresh Location" : "Use My Location"}
+                </>
+              )}
+            </Button>
+
+            <Button
+              variant="outline"
+              className="flex-shrink-0"
+              onClick={() => setManualLocationOpen((open) => !open)}
+            >
+              <MapPin className="w-4 h-4 mr-2" />
+              Set Manually
+            </Button>
+
+            {nearestMode && (
+              <Button
+                variant="outline"
+                className="flex-shrink-0"
+                onClick={() => setNearestMode(false)}
+              >
+                Default Order
+              </Button>
+            )}
             
             {/* Clear Filters Button */}
             {(cityFilter !== "all" || stationIdSearch) && (
@@ -410,10 +810,104 @@ export default function StationsPage() {
               </Button>
             )}
           </div>
+          {manualLocationOpen && (
+            <div className="mt-3 bg-white border border-emerald-200 rounded-lg p-3">
+              <div className="flex flex-col md:flex-row gap-3">
+                <Input
+                  value={manualLocationInput}
+                  onChange={(event) => setManualLocationInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleManualLocationSubmit();
+                  }}
+                  placeholder="Paste Google Maps link or lat,lng, e.g. 16.8524, 74.5815"
+                  className="flex-1"
+                />
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={handleManualLocationSubmit}
+                >
+                  Use This Location
+                </Button>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">
+                Browser location on laptops can be IP-based. For exact directions, drop a pin in Google Maps, copy the link, and paste it here.
+              </p>
+            </div>
+          )}
+          {userLocation && nearestMode && (
+            <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+              Sorted using {userLocation.source === "manual" ? "your manually set location" : "your current location"}, station distance, and wait time.
+              {userLocation.source === "manual" ? " Manual coordinates are being used." : ` Accuracy: about ${Math.round(userLocation.accuracy)} m.`}
+            </p>
+          )}
+          {locationError && (
+            <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mt-2">
+              {locationError}
+            </p>
+          )}
         </div>
       </header>
 
       <div className="container mx-auto px-6 py-8">
+        {nearestMode && userLocation && (
+          <div className="mb-8 bg-white border border-emerald-200 rounded-lg shadow-sm p-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Nearest charging options</h2>
+                <p className="text-sm text-gray-700">
+                  Showing both nearby stations that will open soon and available stations that may be worth the extra distance.
+                </p>
+              </div>
+              <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1 flex items-center w-fit">
+                <Navigation className="w-4 h-4 mr-1.5" />
+                Live location active
+              </div>
+            </div>
+
+            {nearbyRecommendationStations.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {nearbyRecommendationStations.map((station) => (
+                  <button
+                    key={station.id}
+                    className="text-left border border-gray-200 rounded-lg p-4 bg-gray-50 hover:bg-white hover:border-emerald-300 transition-colors"
+                    onClick={() => {
+                      setSelectedStation(station);
+                      setStationModalOpen(true);
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">
+                          {station.isOccupied ? "Nearby, opening soon" : "Nearest available now"}
+                        </p>
+                        <h3 className="text-base font-semibold text-gray-900">Station #{station.id}</h3>
+                        <p className="text-sm text-gray-700 mt-1">{station.location}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(station)}`}>
+                        {getStatusText(station)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mt-4">
+                      <div className="bg-white border border-gray-200 rounded-md p-3">
+                        <p className="text-xs text-gray-600">Distance</p>
+                        <p className="text-sm font-semibold text-gray-900">{formatDistance(station.distanceKm)}</p>
+                      </div>
+                      <div className="bg-white border border-gray-200 rounded-md p-3">
+                        <p className="text-xs text-gray-600">Readiness</p>
+                        <p className="text-sm font-semibold text-gray-900">{getReadinessText(station)}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                No nearby recommendation can be calculated yet. Make sure stations have latitude and longitude saved.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Summary Stats */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
           <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white shadow-md hover:shadow-lg transition-all">
@@ -499,7 +993,7 @@ export default function StationsPage() {
 
         {/* Stations List */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStations.map((station) => (
+          {displayStations.map((station) => (
             <Card 
               key={station.id} 
               className={`bg-white shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer ${
@@ -511,6 +1005,21 @@ export default function StationsPage() {
               }}
             >
               <CardContent className="p-6">
+                {/* Map preview on card when available */}
+                {buildMapSrc(station, nearestMode ? userLocation : null) && (
+                  <div className="rounded-lg overflow-hidden mb-4">
+                    <iframe
+                      src={buildMapSrc(station, nearestMode ? userLocation : null)}
+                      width="100%"
+                      height={140}
+                      style={{ border: 0 }}
+                      allowFullScreen
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                      title={nearestMode && userLocation ? `Directions to station ${station.id}` : `Station ${station.id} map`}
+                    />
+                  </div>
+                )}
                 {/* Station Header with colored background based on status */}
                 <div className={`-m-6 mb-4 p-6 ${
                   station.isFaulty ? 'bg-red-50 border-b border-red-100' : 
@@ -565,6 +1074,18 @@ export default function StationsPage() {
                       <span className="text-sm font-semibold text-gray-900">{station.totalEnergyConsumption} kWh</span>
                     </div>
                   </div>
+
+                  {nearestMode && userLocation && (
+                    <div className="flex items-center justify-between bg-emerald-50 -mx-2 px-2 py-1.5 rounded">
+                      <span className="text-sm font-medium text-emerald-800 flex items-center">
+                        <Navigation className="w-3.5 h-3.5 mr-1" />
+                        Distance
+                      </span>
+                      <span className="text-sm font-bold text-emerald-700">
+                        {formatDistance(station.distanceKm)}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">Operator</span>
@@ -628,7 +1149,7 @@ export default function StationsPage() {
           ))}
         </div>
 
-        {filteredStations.length === 0 && (
+        {displayStations.length === 0 && (
           <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200 shadow-sm">
             <MapPin className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-800 mb-2">No stations found</h3>
@@ -657,6 +1178,7 @@ export default function StationsPage() {
         isOpen={stationModalOpen}
         onClose={() => setStationModalOpen(false)}
         station={selectedStation}
+        userLocation={userLocation}
         userData={userData}
         onStartCharging={handleStartCharging}
         onStopCharging={handleStopCharging}
@@ -675,6 +1197,7 @@ function StationDetailModal({
   isOpen, 
   onClose, 
   station, 
+  userLocation,
   userData, 
   onStartCharging,
   onStopCharging,
@@ -684,9 +1207,16 @@ function StationDetailModal({
   loading,
   queueLoading
 }: StationDetailModalProps) {
-  const [pointsToUse, setPointsToUse] = useState<number>(10);
-  const [countdown, setCountdown] = useState<string>("");
   const userPoints = userData?.points ? parseInt(userData.points) : 0;
+  const [localUserPoints, setLocalUserPoints] = useState(userPoints);
+  const [pointsToUse, setPointsToUse] = useState<number>(Math.min(10, Math.max(0, userPoints)));
+  const [countdown, setCountdown] = useState<string>("");
+  const [localSessionActive, setLocalSessionActive] = useState(false);
+  const [localSessionCompleted, setLocalSessionCompleted] = useState(false);
+  const [localRemainingSeconds, setLocalRemainingSeconds] = useState<number | null>(null);
+  const [localTotalSeconds, setLocalTotalSeconds] = useState(0);
+  const [localSessionStartPoints, setLocalSessionStartPoints] = useState(0);
+  const [localSpentPoints, setLocalSpentPoints] = useState(0);
 
   // Live countdown timer
   useEffect(() => {
@@ -723,15 +1253,113 @@ function StationDetailModal({
     return () => clearInterval(interval);
   }, [station?.activeSession?.estimatedFreeAt]);
 
+  // sync pointsToUse when modal opens or userPoints change
+  useEffect(() => {
+    if (!isOpen) return;
+    const storedPoints = Number(localStorage.getItem("localPoints") || 0);
+    const effectivePoints = Math.max(userPoints, storedPoints);
+    setLocalUserPoints(effectivePoints);
+    setPointsToUse(Math.min(10, Math.max(0, effectivePoints)));
+  }, [isOpen, userPoints]);
+
+  // local charging countdown
+  useEffect(() => {
+    if (!localSessionActive || localRemainingSeconds === null) return;
+    const interval = setInterval(() => {
+      setLocalRemainingSeconds((prev) => (prev !== null ? Math.max(prev - 1, 0) : prev));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [localSessionActive, localRemainingSeconds]);
+
+  // drain points over time and complete session
+  useEffect(() => {
+    if (!localSessionActive || localRemainingSeconds === null) return;
+    const elapsedSeconds = localTotalSeconds - localRemainingSeconds;
+    const spentPoints = Math.min(pointsToUse, Math.floor(elapsedSeconds / (5 * 60)));
+
+    if (spentPoints !== localSpentPoints) {
+      const updatedPoints = Math.max(0, localSessionStartPoints - spentPoints);
+      setLocalUserPoints(updatedPoints);
+      localStorage.setItem("localPoints", updatedPoints.toString());
+      setLocalSpentPoints(spentPoints);
+    }
+
+    if (localRemainingSeconds === 0) {
+      setLocalSessionActive(false);
+      setLocalSessionCompleted(true);
+      const totalMinutes = Math.max(1, Math.round(localTotalSeconds / 60));
+      const historyItem = {
+        sessionId: Date.now(),
+        stationId: station?.id ?? 0,
+        location: station?.location ?? "",
+        stationLocation: station?.location ?? "",
+        createdAt: new Date().toISOString(),
+        totalTime: `${totalMinutes} min`,
+        isActive: false,
+        pointsUsed: pointsToUse.toString(),
+        energyConsumption: Number((pointsToUse * 0.5).toFixed(1)),
+        transactionID: null,
+        operator: station?.operator ?? "",
+        oem: station?.oem ?? "",
+        stationHealth: station?.healthPercentage ?? 0,
+        stationStatus: {
+          isOccupied: false,
+          isActive: true,
+          isFaulty: false,
+        },
+      };
+      const existing = JSON.parse(localStorage.getItem("localChargingHistory") || "[]");
+      existing.unshift(historyItem);
+      localStorage.setItem("localChargingHistory", JSON.stringify(existing));
+      toast.success("Charging session completed", {
+        description: "Saved to history",
+      });
+    }
+  }, [localRemainingSeconds, localSessionActive, localSessionStartPoints, localSpentPoints, localTotalSeconds, pointsToUse, station]);
+
   // Validate points input
   const handlePointsChange = (value: string) => {
-    const numValue = parseInt(value);
-    if (!isNaN(numValue) && numValue > 0) {
-      if (numValue <= userPoints) {
-        setPointsToUse(numValue);
-      } else {
-        setPointsToUse(userPoints);
-      }
+    // allow empty value while typing
+    if (value === "") {
+      setPointsToUse(0);
+      return;
+    }
+    const numValue = Number(value);
+    if (Number.isNaN(numValue)) return;
+    // clamp to [0, userPoints]
+    const clamped = Math.max(0, Math.min(numValue, localUserPoints || numValue));
+    setPointsToUse(clamped);
+  };
+
+  const formatRemaining = (seconds: number | null) => {
+    if (seconds === null) return "--";
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${minutes}m ${secs}s`;
+  };
+
+  const handleLocalStartCharging = async () => {
+    if (!station) return;
+    if (pointsToUse <= 0 || pointsToUse > localUserPoints) {
+      toast.error("Enter a valid points amount");
+      return;
+    }
+
+    try {
+      await onStartCharging(station.id, pointsToUse);
+
+      const totalSeconds = pointsToUse * 5 * 60;
+      setLocalTotalSeconds(totalSeconds);
+      setLocalRemainingSeconds(totalSeconds);
+      setLocalSessionStartPoints(localUserPoints);
+      setLocalSpentPoints(0);
+      setLocalSessionActive(true);
+      setLocalSessionCompleted(false);
+      toast.success("Charging started", {
+        description: "Please follow the safety rules below.",
+      });
+    } catch {
+      // The parent handler already shows the backend error message.
     }
   };
 
@@ -740,26 +1368,26 @@ function StationDetailModal({
   const isUserInQueue = station.queue?.userPosition !== null && station.queue?.userPosition > 0;
   const isFirstInQueue = station.queue?.userPosition === 1;
   const isNotified = station.queue?.userStatus === "NOTIFIED";
+  const mapSrc = buildMapSrc(station, userLocation);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Station #${station.id} Details`}>
       <div className="space-y-6">
         {/* Map Preview */}
-        <div className="rounded-lg overflow-hidden border border-gray-200">
-          <iframe
-            src={[
-              "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.579888814001!2d74.59648567604198!3d16.847184983950903!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc1230022fe31f5%3A0x121957a2c3e10a18!2sR%20city%20mall!5e0!3m2!1sen!2sin!4v1772685960972!5m2!1sen!2sin",
-              "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.5588809933924!2d74.59312927604199!3d16.848225883949958!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc12282a750bba7%3A0x77d299df3df3e31!2sHotel%20Pai%20Prakash!5e0!3m2!1sen!2sin!4v1772686275881!5m2!1sen!2sin",
-              "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1706.1314158003859!2d74.57590458963301!3d16.84559673080401!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc11942e00b2813%3A0x6ee1615e6e49b25e!2sD-mart%20Sangli!5e0!3m2!1sen!2sin!4v1772686370655!5m2!1sen!2sin"
-            ][station.id % 3]}
-            width="100%"
-            height="200"
-            style={{ border: 0 }}
-            allowFullScreen
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-          />
-        </div>
+        {mapSrc && (
+          <div className="rounded-lg overflow-hidden border border-gray-200">
+            <iframe
+              src={mapSrc}
+              width="100%"
+              height="260"
+              style={{ border: 0 }}
+              allowFullScreen
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              title={userLocation ? `Directions to station ${station.id}` : `Station ${station.id} map`}
+            />
+          </div>
+        )}
 
         {/* Station Info */}
         <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
@@ -960,7 +1588,7 @@ function StationDetailModal({
               </div>
               <div className="flex justify-between pt-2">
                 <span className="text-gray-700 font-medium">Available Points:</span>
-                <span className="font-medium text-green-700">{userData.points} points</span>
+                <span className="font-medium text-green-700">{localUserPoints} points</span>
               </div>
             </div>
           </div>
@@ -1008,8 +1636,8 @@ function StationDetailModal({
                 <div className="flex items-center">
                   <input
                     type="number"
-                    min="1"
-                    max={userPoints}
+                    min={0}
+                    max={localUserPoints}
                     value={pointsToUse}
                     onChange={(e) => handlePointsChange(e.target.value)}
                     className="w-full p-2 border border-yellow-200 bg-white rounded-md text-gray-900 focus:ring-2 focus:ring-yellow-300 focus:border-yellow-400 focus:outline-none"
@@ -1020,11 +1648,39 @@ function StationDetailModal({
                   This will allow approximately {pointsToUse * 5} minutes of charging time.
                 </p>
               </div>
+
+              {(localSessionActive || localSessionCompleted) && (
+                <div className="bg-white border border-yellow-200 rounded-lg p-3 space-y-3">
+                  <div className="text-sm font-semibold text-gray-800">Safety checklist</div>
+                  <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
+                    <li>Make sure to stick the charging gun firmly to your vehicle.</li>
+                    <li>Do not remove the connector while charging is active.</li>
+                    <li>Keep the cable clear of pedestrians and vehicles.</li>
+                  </ul>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">Remaining time</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatRemaining(localRemainingSeconds)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">Points draining</span>
+                    <span className="font-semibold text-gray-900">
+                      {Math.max(0, localUserPoints)} points left
+                    </span>
+                  </div>
+                  {localSessionCompleted && (
+                    <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-2">
+                      Charging completed. Added to history.
+                    </div>
+                  )}
+                </div>
+              )}
               
               <Button
                 className="w-full bg-green-600 hover:bg-green-700 text-white"
-                onClick={() => onStartCharging(station.id, pointsToUse)}
-                disabled={loading || pointsToUse <= 0 || pointsToUse > userPoints}
+                onClick={handleLocalStartCharging}
+                disabled={loading || localSessionActive || pointsToUse <= 0 || pointsToUse > localUserPoints}
               >
                 {loading ? (
                   <>

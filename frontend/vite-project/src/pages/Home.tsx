@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { LogOut, MapPin, History, Wrench, Wallet, Zap, Car, Users, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Modal from "@/components/ui/Modal";
 import api from "../lib/api";
+import { toast } from "sonner";
 
 interface DashboardData {
   userName: string;
@@ -21,6 +22,8 @@ export default function Home() {
   const navigate = useNavigate();
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportText, setReportText] = useState("");
+  const [showAddPointsModal, setShowAddPointsModal] = useState(false);
+  const [addPointsValue, setAddPointsValue] = useState<string>("");
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -46,7 +49,28 @@ export default function Home() {
   };
 
   const handlePayment = () => {
-    console.log("Payment functionality to be implemented");
+    setAddPointsValue("");
+    setShowAddPointsModal(true);
+  };
+
+  const handleConfirmAddPoints = () => {
+    const parsed = Number(addPointsValue);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      toast.error("Enter a valid points amount");
+      return;
+    }
+
+    if (!dashboardData) return;
+    const current = Number(dashboardData.totalPoints || 0);
+    const updated = current + parsed;
+
+    setDashboardData({
+      ...dashboardData,
+      totalPoints: updated.toString(),
+    });
+    localStorage.setItem("localPoints", updated.toString());
+    toast.success("Points added", { description: `Added ${parsed} points` });
+    setShowAddPointsModal(false);
   };
 
   const handleNavigation = (path: string) => {
@@ -303,6 +327,37 @@ export default function Home() {
           </div>
         </Modal>
       </div>
+
+      {/* Add Points Modal */}
+      <Modal
+        isOpen={showAddPointsModal}
+        onClose={() => setShowAddPointsModal(false)}
+        title="Add Points"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              How many points do you want to add?
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={addPointsValue}
+              onChange={(e) => setAddPointsValue(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-md text-gray-900 focus:ring-2 focus:ring-green-300 focus:border-green-400 focus:outline-none"
+              placeholder="e.g. 500"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowAddPointsModal(false)}>
+              Cancel
+            </Button>
+            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleConfirmAddPoints}>
+              Add Points
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

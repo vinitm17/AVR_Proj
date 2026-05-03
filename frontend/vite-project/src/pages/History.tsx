@@ -55,15 +55,27 @@ export default function HistoryPage() {
     try {
       setLoading(true);
       const response = await api.get("/get/history");
-      setSessions(response.data.sessions);
+      const localSessions = JSON.parse(localStorage.getItem("localChargingHistory") || "[]");
+      const mergedSessions = [...localSessions, ...response.data.sessions];
+      setSessions(mergedSessions);
       setStats({
-        totalSessions: response.data.totalSessions,
-        activeSessions: response.data.activeSessions
+        totalSessions: mergedSessions.length,
+        activeSessions: mergedSessions.filter((session: Session) => session.isActive).length
       });
       setError("");
     } catch (err) {
       console.error("Error fetching history:", err);
-      setError("Failed to load charging history. Please try again.");
+      const localSessions = JSON.parse(localStorage.getItem("localChargingHistory") || "[]");
+      if (localSessions.length > 0) {
+        setSessions(localSessions);
+        setStats({
+          totalSessions: localSessions.length,
+          activeSessions: localSessions.filter((session: Session) => session.isActive).length,
+        });
+        setError("");
+      } else {
+        setError("Failed to load charging history. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

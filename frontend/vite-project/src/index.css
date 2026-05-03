@@ -370,6 +370,16 @@
   }
   
   #root {
-    @apply max-w-screen-2xl mx-auto;
+    /* allow full width to avoid side bars */
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
   }
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
