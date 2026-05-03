@@ -50,7 +50,7 @@ const signupSchema = zod_1.z.object({
 });
 const signinSchema = zod_1.z.object({
     email: zod_1.z.string().email("Invalid email format"),
-    password: zod_1.z.string().min(6).max(16)
+    password: zod_1.z.string().min(6).max(50)
 });
 const signupMiddleware = (req, res, next) => {
     const parse = signupSchema.safeParse(req.body);
@@ -94,6 +94,7 @@ const verifyJWT = (req, res, next) => {
         const decoded = jsonwebtoken_1.default.verify(token, SECRET);
         req.email = decoded.email;
         req.id = decoded.id;
+        req.role = decoded.role;
         next();
     }
     catch (err) {

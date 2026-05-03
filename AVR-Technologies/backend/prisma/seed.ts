@@ -179,6 +179,9 @@ async function main() {
       totalEnergyConsumption: BigInt(15000),
       healthPercentage: 95,
       isOccupied: true,
+      latitude: 16.8472558,
+      longitude: 74.5987356,
+      mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d432.8030714416994!2d74.59873562066275!3d16.84725578534954!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc123007d046a15%3A0x51abb635d9ba80a0!2sEffotel%20by%20Sayaji%2C%20Sangli!5e0!3m2!1sen!2sin!4v1777801055197!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
       isActive: true,
       isFaulty: false
     }
@@ -194,6 +197,9 @@ async function main() {
       totalEnergyConsumption: BigInt(22000),
       healthPercentage: 88,
       isOccupied: false,
+      latitude: 16.865268,
+      longitude: 74.5909501,
+      mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d238.63842201666768!2d74.5909501303994!3d16.865267967468114!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc1180acf8cbd2f%3A0x8a37f1372dc62bd3!2sVraj%20Technologies%20Charging%20Station!5e0!3m2!1sen!2sin!4v1777801198980!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
       isActive: true,
       isFaulty: false
     }
@@ -209,6 +215,9 @@ async function main() {
       totalEnergyConsumption: BigInt(31000),
       healthPercentage: 92,
       isOccupied: true,
+      latitude: 16.8652679,
+      longitude: 74.5885361,
+      mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.214753241584!2d74.58853613886272!3d16.865267919212357!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc1192fc537db45%3A0xf16ce72abb35dd73!2sKrishna%20godavari%20ev%20charging%20station!5e0!3m2!1sen!2sin!4v1777801255281!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
       isActive: true,
       isFaulty: false
     }
@@ -224,6 +233,9 @@ async function main() {
       totalEnergyConsumption: BigInt(18500),
       healthPercentage: 78,
       isOccupied: false,
+      latitude: 16.8429686,
+      longitude: 74.6116278,
+      mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3818.6649728327634!2d74.60905287604193!3d16.842968583954345!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc119755cbdb9ad%3A0x4e5cf9d3e94caf88!2sJIMIS%20BURGER%20%C2%AE%20-%20Sangli!5e0!3m2!1sen!2sin!4v1777801303378!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
       isActive: false,
       isFaulty: true
     }
@@ -239,6 +251,9 @@ async function main() {
       totalEnergyConsumption: BigInt(27800),
       healthPercentage: 96,
       isOccupied: true,
+      latitude: 19.166445,
+      longitude: 72.936014,
+      mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m14!1m8!1m3!1d60298.52692515201!2d72.936014!3d19.166445!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3be7b913585fc533%3A0x4c5fa5cf22f5bd5d!2sPiramal%20Revanta%20Sales%20Office!5e0!3m2!1sen!2sin!4v1732468527570!5m2!1sen!2sin" width="100%" height="450" loading="lazy" referrerpolicy="no-referrer-when-downgrade" style="border: 0px;"></iframe>`,
       isActive: true,
       isFaulty: false
     }

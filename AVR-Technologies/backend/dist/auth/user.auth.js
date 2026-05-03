@@ -71,17 +71,20 @@ exports.authUserRouter.post("/signup", auth_middleware_1.signupMiddleware, (req,
             return;
         }
         if (existingUser && existingUser.lastName === lastName && existingUser.firstName === firstName && existingUser.password === password) {
-            const token = jsonwebtoken_1.default.sign({ email: email, id: existingUser.id }, secret, { expiresIn: "30d" });
+            const token = jsonwebtoken_1.default.sign({
+                email: email,
+                id: existingUser.id,
+                role: existingUser.role
+            }, secret, { expiresIn: "30d" });
             res.json({
                 msg: "logging you in",
                 token
             });
         }
         else if (existingUser && (existingUser.lastName != lastName || existingUser.firstName != firstName || existingUser.password != password)) {
-            res.json({
-                msg: "incorrect credentials, try again"
+            return res.status(400).json({
+                msg: "User already exists with different credentials"
             });
-            return;
         }
         else if (!existingUser) {
             const newUser = yield prisma.user.create({
@@ -96,18 +99,26 @@ exports.authUserRouter.post("/signup", auth_middleware_1.signupMiddleware, (req,
             });
             if (!secret) {
                 console.error("secret env variable not found");
-                return;
+                return res.status(500).json({
+                    msg: "Internal server error"
+                });
             }
-            const token = jsonwebtoken_1.default.sign({ email: email, id: newUser.id }, secret, { expiresIn: "30d" });
-            res.json({
-                msg: "signed in",
+            const token = jsonwebtoken_1.default.sign({
+                email: email,
+                id: newUser.id,
+                role: newUser.role
+            }, secret, { expiresIn: "30d" });
+            return res.json({
+                msg: "Account created successfully",
                 token
             });
         }
     }
     catch (e) {
         console.error("error : " + e);
-        return;
+        return res.status(500).json({
+            msg: "Internal server error"
+        });
     }
 }));
 exports.authUserRouter.post("/signin", auth_middleware_1.signinMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -120,29 +131,36 @@ exports.authUserRouter.post("/signin", auth_middleware_1.signinMiddleware, (req,
         });
         if (!secret) {
             console.error("secret env variable not found");
-            return;
-        }
-        if (!existingUser) {
-            res.json({
-                msg: "user not found redirect to signin page"
+            return res.status(500).json({
+                msg: "Internal server error"
             });
         }
-        if (existingUser && existingUser.email === email && existingUser.password === password) {
-            const token = jsonwebtoken_1.default.sign({ email: email, id: existingUser.id }, secret, { expiresIn: "30d" });
-            res.json({
-                msg: "logging you ",
+        if (!existingUser) {
+            return res.status(404).json({
+                msg: "User not found. Please sign up first."
+            });
+        }
+        if (existingUser.password === password) {
+            const token = jsonwebtoken_1.default.sign({
+                email: email,
+                id: existingUser.id,
+                role: existingUser.role
+            }, secret, { expiresIn: "30d" });
+            return res.json({
+                msg: "Logged in successfully",
                 token
             });
         }
-        if (existingUser && (existingUser.email != email || existingUser.password != password)) {
-            // const token = jwt.sign({email:email, id:existingUser.id}, secret, {expiresIn:"30d"})
-            res.json({
-                msg: "invalid credentials ",
+        else {
+            return res.status(401).json({
+                msg: "Incorrect password. Please try again."
             });
         }
     }
     catch (e) {
         console.error("error: " + e);
-        return;
+        return res.status(500).json({
+            msg: "Internal server error"
+        });
     }
 }));

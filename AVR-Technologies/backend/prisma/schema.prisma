@@ -66,6 +66,9 @@ model User{
 model chargingStation{
   id Int @id @unique @default(autoincrement()) //CID
   location String
+  latitude Float?
+  longitude Float?
+  mapIframe String?
 
   OEM User @relation("stationOEM", fields: [OEMId], references: [id])
   OEMId Int
