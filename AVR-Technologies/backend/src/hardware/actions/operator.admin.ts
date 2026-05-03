@@ -1,0 +1,257 @@
+import { Router } from "express";
+import { Response } from "express";
+import { PrismaClient, Role } from "@prisma/client";
+import { verifyJWT, userReq } from "../../middleware/auth.middleware";
+
+export const operatorAdminRouter = Router();
+const prisma = new PrismaClient();
+
+const requireOperator = (req: userReq, res: Response): number | null => {
+  if (!req.id) {
+    res.status(401).json({ msg: "User not authenticated" });
+    return null;
+  }
+
+  if (req.role !== Role.Operator) {
+    res.status(403).json({ msg: "Access denied. Only Operators can access this resource." });
+    return null;
+  }
+
+  return req.id;
+};
+
+operatorAdminRouter.post("/station/add", verifyJWT, async (req: userReq, res: Response) => {
+  try {
+    const operatorId = requireOperator(req, res);
+    if (!operatorId) return;
+
+    const {
+      location,
+      OEMId,
+      resellerId,
+      operatorId: operatorIdOverride,
+      totalEnergyConsumption,
+      healthPercentage,
+      isActive,
+      isFaulty
+    } = req.body;
+
+    if (!location || !OEMId || !resellerId) {
+      return res.status(400).json({
+        msg: "location, OEMId, and resellerId are required"
+      });
+    }
+
+    const [oem, reseller] = await Promise.all([
+      prisma.user.findUnique({ where: { id: Number(OEMId) } }),
+      prisma.user.findUnique({ where: { id: Number(resellerId) } })
+    ]);
+
+    if (!oem || oem.role !== Role.OEM) {
+      return res.status(400).json({ msg: "OEMId must reference an OEM user" });
+    }
+
+    if (!reseller || reseller.role !== Role.Reseller) {
+      return res.status(400).json({ msg: "resellerId must reference a Reseller user" });
+    }
+
+    const station = await prisma.chargingStation.create({
+      data: {
+        location: String(location),
+        OEMId: Number(OEMId),
+        resellerId: Number(resellerId),
+        operatorId: Number(operatorIdOverride || operatorId),
+        totalEnergyConsumption: BigInt(totalEnergyConsumption ?? 0),
+        healthPercentage: Number(healthPercentage ?? 100),
+        isOccupied: false,
+        isActive: Boolean(isActive ?? true),
+        isFaulty: Boolean(isFaulty ?? false)
+      }
+    });
+
+    return res.json({
+      msg: "Station created successfully",
+      stationId: station.id
+    });
+  } catch (e) {
+    console.error("Error creating station: " + e);
+    return res.status(500).json({ msg: "Internal server error" });
+  }
+});
+
+operatorAdminRouter.post("/station/remove", verifyJWT, async (req: userReq, res: Response) => {
+  try {
+    const operatorId = requireOperator(req, res);
+    if (!operatorId) return;
+
+    const { stationId } = req.body;
+
+    if (!stationId) {
+      return res.status(400).json({ msg: "stationId is required" });
+    }
+
+    const station = await prisma.chargingStation.findUnique({
+      where: { id: Number(stationId) }
+    });
+
+    if (!station) {
+      return res.status(404).json({ msg: "Station not found" });
+    }
+
+    if (station.operatorId !== operatorId) {
+      return res.status(403).json({ msg: "You can only remove stations you operate" });
+    }
+
+    await prisma.chargingStation.delete({ where: { id: Number(stationId) } });
+
+    return res.json({ msg: "Station removed successfully" });
+  } catch (e) {
+    console.error("Error removing station: " + e);
+    return res.status(500).json({ msg: "Internal server error" });
+  }
+});
+
+operatorAdminRouter.post("/station/update", verifyJWT, async (req: userReq, res: Response) => {
+  try {
+    const operatorId = requireOperator(req, res);
+    if (!operatorId) return;
+
+    const { stationId, isActive, isFaulty, healthPercentage } = req.body;
+
+    if (!stationId) {
+      return res.status(400).json({ msg: "stationId is required" });
+    }
+
+    const station = await prisma.chargingStation.findUnique({
+      where: { id: Number(stationId) }
+    });
+
+    if (!station) {
+      return res.status(404).json({ msg: "Station not found" });
+    }
+
+    if (station.operatorId !== operatorId) {
+      return res.status(403).json({ msg: "You can only update stations you operate" });
+    }
+
+    const updated = await prisma.chargingStation.update({
+      where: { id: Number(stationId) },
+      data: {
+        isActive: typeof isActive === "boolean" ? isActive : station.isActive,
+        isFaulty: typeof isFaulty === "boolean" ? isFaulty : station.isFaulty,
+        healthPercentage: typeof healthPercentage === "number" ? healthPercentage : station.healthPercentage
+      }
+    });
+
+    return res.json({
+      msg: "Station updated successfully",
+      station: {
+        id: updated.id,
+        isActive: updated.isActive,
+        isFaulty: updated.isFaulty,
+        healthPercentage: updated.healthPercentage
+      }
+    });
+  } catch (e) {
+    console.error("Error updating station: " + e);
+    return res.status(500).json({ msg: "Internal server error" });
+  }
+});
+
+operatorAdminRouter.get("/station-analytics", verifyJWT, async (req: userReq, res: Response) => {
+  try {
+    const operatorId = requireOperator(req, res);
+    if (!operatorId) return;
+
+    const stations = await prisma.chargingStation.findMany({
+      where: { operatorId: operatorId },
+      select: { id: true }
+    });
+
+    const stationIds = stations.map(s => s.id);
+
+    if (stationIds.length === 0) {
+      return res.json({
+        msg: "No stations for operator",
+        analytics: []
+      });
+    }
+
+    const sessions = await prisma.sessions.findMany({
+      where: { stationId: { in: stationIds } },
+      select: { stationId: true, pointsUsed: true, energyConsumption: true }
+    });
+
+    const totals = new Map<number, { totalPoints: number; totalEnergy: number; totalSessions: number }>();
+    for (const stationId of stationIds) {
+      totals.set(stationId, { totalPoints: 0, totalEnergy: 0, totalSessions: 0 });
+    }
+
+    for (const session of sessions) {
+      const entry = totals.get(session.stationId) || { totalPoints: 0, totalEnergy: 0, totalSessions: 0 };
+      entry.totalPoints += Number(session.pointsUsed || 0);
+      entry.totalEnergy += Number(session.energyConsumption || 0);
+      entry.totalSessions += 1;
+      totals.set(session.stationId, entry);
+    }
+
+    const analytics = Array.from(totals.entries()).map(([stationId, entry]) => ({
+      stationId,
+      totalPoints: entry.totalPoints.toString(),
+      totalEnergy: entry.totalEnergy.toFixed(2),
+      totalSessions: entry.totalSessions
+    }));
+
+    return res.json({
+      msg: "Station analytics retrieved successfully",
+      analytics
+    });
+  } catch (e) {
+    console.error("Error fetching station analytics: " + e);
+    return res.status(500).json({ msg: "Internal server error" });
+  }
+});
+
+operatorAdminRouter.get("/users", verifyJWT, async (req: userReq, res: Response) => {
+  try {
+    const operatorId = requireOperator(req, res);
+    if (!operatorId) return;
+
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        role: true,
+        points: true,
+        session: {
+          select: {
+            pointsUsed: true
+          }
+        }
+      },
+      orderBy: { id: "asc" }
+    });
+
+    const formatted = users.map(user => {
+      const totalPointsUsed = user.session.reduce((sum, s) => sum + Number(s.pointsUsed || 0), 0);
+      return {
+        id: user.id,
+        name: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        role: user.role,
+        pointsBalance: user.points ? user.points.toString() : "0",
+        pointsConsumed: totalPointsUsed.toString()
+      };
+    });
+
+    return res.json({
+      msg: "Users retrieved successfully",
+      users: formatted
+    });
+  } catch (e) {
+    console.error("Error fetching users: " + e);
+    return res.status(500).json({ msg: "Internal server error" });
+  }
+});

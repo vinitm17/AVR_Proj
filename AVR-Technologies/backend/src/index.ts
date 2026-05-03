@@ -7,6 +7,8 @@ import { WebSocketServer } from "ws"
 
 import { authUserRouter } from "./auth/user.auth"
 import { userRouter } from "./enduser/user.routes"
+import { hwRouter } from "./hardware/hw.routes"
+import { operatorRouter } from "./operator/operator.routes"
 
 const app = express()
 app.use(express.json())
@@ -40,6 +42,8 @@ app.get("/", (req, res)=>{
 
 app.use("/backend/v1/auth", authUserRouter)
 app.use("/backend/v1", userRouter);
+app.use("/backend/v1/hw", hwRouter)
+app.use("/backend/v1/operator", operatorRouter)
 
 server.listen(5000, ()=>{console.log("🚀 Server running on http://localhost:5000")})
 
