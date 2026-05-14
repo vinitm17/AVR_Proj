@@ -1,11 +1,14 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { LogOut, MapPin, History, Wrench, Wallet, Zap, Car, Users, User } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import Modal from "@/components/ui/Modal";
-import api from "../lib/api";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { BatteryCharging, Clock, History, MapPin, Plus, Route, Wallet } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import api from "../lib/api";
 
 interface DashboardData {
   userName: string;
@@ -19,345 +22,215 @@ interface DashboardData {
 export default function Home() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportText, setReportText] = useState("");
-  const [showAddPointsModal, setShowAddPointsModal] = useState(false);
-  const [addPointsValue, setAddPointsValue] = useState<string>("");
+  const [showAddPoints, setShowAddPoints] = useState(false);
+  const [addPointsValue, setAddPointsValue] = useState("");
+  const [addingPoints, setAddingPoints] = useState(false);
+
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get("/get/dashboard");
+      setDashboardData(response.data.data);
+    } catch (err) {
+      console.error("Error fetching dashboard data:", err);
+      toast.error("Failed to load dashboard data.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        setLoading(true);
-        const response = await api.get("/get/dashboard");
-        setDashboardData(response.data.data);
-      } catch (err) {
-        console.error("Error fetching dashboard data:", err);
-        localStorage.removeItem("token");
-        navigate("/signin");
-      } finally {
-        setLoading(false);
-      }
-    };
-    
     loadDashboardData();
-  }, [navigate]);
+  }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    navigate("/signin");
-  };
-
-  const handlePayment = () => {
-    setAddPointsValue("");
-    setShowAddPointsModal(true);
-  };
-
-  const handleConfirmAddPoints = () => {
+  const handleConfirmAddPoints = async () => {
     const parsed = Number(addPointsValue);
-    if (Number.isNaN(parsed) || parsed <= 0) {
+    if (!Number.isInteger(parsed) || parsed <= 0) {
       toast.error("Enter a valid points amount");
       return;
     }
 
-    if (!dashboardData) return;
-    const current = Number(dashboardData.totalPoints || 0);
-    const updated = current + parsed;
-
-    setDashboardData({
-      ...dashboardData,
-      totalPoints: updated.toString(),
-    });
-    localStorage.setItem("localPoints", updated.toString());
-    toast.success("Points added", { description: `Added ${parsed} points` });
-    setShowAddPointsModal(false);
+    try {
+      setAddingPoints(true);
+      const response = await api.post("/post/addPoints", { points: parsed });
+      setDashboardData((current) => current ? { ...current, totalPoints: response.data.points } : current);
+      setShowAddPoints(false);
+      setAddPointsValue("");
+      toast.success("Points added", { description: `Added ${parsed} points` });
+    } catch (err) {
+      console.error("Error adding points:", err);
+      toast.error("Failed to add points. Please try again.");
+    } finally {
+      setAddingPoints(false);
+    }
   };
 
-  const handleNavigation = (path: string) => {
-    navigate(path);
-  };
-
-  if (loading || !dashboardData) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-cyan-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
-        </div>
-      </div>
-    );
+  if (loading) {
+    return <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">Loading dashboard...</div>;
   }
 
+  const availablePoints = Number(dashboardData?.totalPoints ?? 0);
+  const estimatedMinutes = availablePoints * 5;
+  const hasChargingHistory = Boolean(dashboardData?.totalSessions);
+  const hasUsedStations = Boolean(dashboardData?.stationsUsed);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-cyan-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-green-200 sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-r from-green-600 to-blue-600 rounded-full flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
+    <div className="space-y-5">
+      <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]/90">
+        <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+          <div>
+          <p className="text-sm font-medium text-[#5A7863]">Welcome back</p>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-[#3B4953]">{dashboardData?.userName ?? "Your dashboard"}</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Manage your charging points, find stations, and review previous sessions from one clean workspace.
+          </p>
+          </div>
+          <div className="rounded-2xl border border-[#90AB8B]/45 bg-[#EBF4DD] p-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-green-700 to-blue-700 bg-clip-text text-transparent">
-                  ONE EV Charging Network
-                </h1>
-                <p className="text-sm text-gray-600">Welcome, {dashboardData.userName}</p>
+                <p className="text-sm text-[#5A7863]">Charging balance</p>
+                <p className="mt-1 text-4xl font-semibold tracking-[-0.04em] text-[#3B4953]">{availablePoints}</p>
+                <p className="mt-1 text-sm text-[#5A7863]">points available</p>
               </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <Button 
-                variant="outline" 
-                onClick={() => handleNavigation('/profile')} 
-                className="flex items-center text-blue-600 border-blue-200 hover:bg-blue-50"
-              >
-                <User className="w-4 h-4 mr-2" />
-                Profile
-              </Button>
-              <Button variant="outline" onClick={handleLogout} className="hover:bg-red-50 hover:border-red-200">
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
+              <Button onClick={() => setShowAddPoints(true)} className="shrink-0">
+                <Plus className="size-4" />
+                Add
               </Button>
             </div>
+            <div className="mt-4 rounded-xl bg-[#90AB8B]/20 px-3 py-2 text-sm text-[#3B4953]">
+              Enough for approximately <span className="font-semibold">{estimatedMinutes}</span> minutes of charging.
+            </div>
           </div>
-        </div>
-      </header>
+        </CardContent>
+      </Card>
 
-      <div className="container mx-auto px-6 py-8">
-        {/* Welcome Section */}
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-gray-800 mb-2">Your EV Dashboard</h2>
-          <p className="text-gray-600">Track your charging, earn points, and explore stations</p>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {/* Total Points with Pay Button */}
-          <Card className="bg-gradient-to-r from-green-500 to-green-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-green-100 text-sm">Total Points</p>
-                  <p className="text-3xl font-bold">{dashboardData.totalPoints}</p>
-                </div>
-                <Wallet className="w-8 h-8 text-green-100" />
-              </div>
-              <Button 
-                onClick={handlePayment}
-                variant="outline"
-                className="w-full bg-white/20 border-white/30 text-white hover:bg-white/30 hover:border-white/50"
-              >
-                <Wallet className="w-4 h-4 mr-2" />
-                Add Points
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Sessions */}
-          <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-blue-100 text-sm">Total Sessions</p>
-                  <p className="text-3xl font-bold">{dashboardData.totalSessions}</p>
-                </div>
-                <Car className="w-8 h-8 text-blue-100" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Stations Used */}
-          <Card className="bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-purple-100 text-sm">Stations Used</p>
-                  <p className="text-3xl font-bold">{dashboardData.stationsUsed}</p>
-                </div>
-                <MapPin className="w-8 h-8 text-purple-100" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Main Action Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          {/* Find Stations */}
-          <Card className="bg-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 cursor-pointer group"
-                onClick={() => handleNavigation('/stations')}>
-            <CardContent className="p-6">
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-                  <MapPin className="w-6 h-6 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Find Stations</h3>
-                  <p className="text-gray-600">Locate nearby charging points</p>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center text-blue-600 group-hover:text-blue-700">
-                <span className="text-sm font-medium">Explore now</span>
-                <span className="ml-1 group-hover:translate-x-1 transition-transform">→</span>
-              </div>
-            </CardContent>
-          </Card>
-          
-          {/* Charging History */}
-          <Card className="bg-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 cursor-pointer group"
-                onClick={() => handleNavigation('/history')}>
-            <CardContent className="p-6">
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center group-hover:bg-green-200 transition-colors">
-                  <History className="w-6 h-6 text-green-600" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Charging History</h3>
-                  <p className="text-gray-600">View your past sessions</p>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center text-green-600 group-hover:text-green-700">
-                <span className="text-sm font-medium">View history</span>
-                <span className="ml-1 group-hover:translate-x-1 transition-transform">→</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Operator Dashboard Button - Only shown for users with Operator role */}
-        {dashboardData.role === "Operator" && (
-          <div className="mb-8">
-            <Card className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer"
-                  onClick={() => handleNavigation('/operator-dashboard')}>
-              <CardContent className="p-6">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
-                    <Wrench className="w-6 h-6 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">Operator Dashboard</h3>
-                    <p className="text-purple-100">Manage your charging stations</p>
-                  </div>
-                  <div className="ml-auto">
-                    <span className="text-white text-lg">→</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Support Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          {/* Report Malfunction */}
-          <Card className="bg-white shadow-lg hover:shadow-xl transition-all duration-300">
-            <CardContent className="p-6">
-              <div className="flex items-center space-x-4 mb-4">
-                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
-                  <Wrench className="w-6 h-6 text-red-600" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Report Issue</h3>
-                  <p className="text-gray-600">Report station malfunctions</p>
-                </div>
-              </div>
-              <Button 
-                onClick={() => setShowReportModal(true)}
-                className="w-full bg-red-500 hover:bg-red-600 text-white"
-              >
-                <Wrench className="w-4 h-4 mr-2" />
-                Report Malfunction
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Contact Support */}
-          <Card className="bg-white shadow-lg hover:shadow-xl transition-all duration-300">
-            <CardContent className="p-6">
-              <div className="flex items-center space-x-4 mb-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                  <Users className="w-6 h-6 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-800">Get Help</h3>
-                  <p className="text-gray-600">Contact our support team</p>
-                </div>
-              </div>
-              <Button 
-                onClick={() => handleNavigation('/support')}
-                variant="outline"
-                className="w-full border-blue-500 text-blue-500 hover:bg-blue-50"
-              >
-                <Users className="w-4 h-4 mr-2" />
-                Contact Support
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Report Modal */}
-        <Modal
-          isOpen={showReportModal}
-          onClose={() => setShowReportModal(false)}
-          title="Report a Malfunction"
-        >
-          <textarea
-            value={reportText}
-            onChange={(e) => setReportText(e.target.value)}
-            rows={4}
-            className="w-full text-black border border-gray-300 rounded-md p-2 mb-4"
-            placeholder="Describe the issue you faced..."
-          />
-          <div className="flex justify-end space-x-2">
-            <Button variant="outline" onClick={() => setShowReportModal(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (reportText.trim() === "") {
-                  alert("Please enter a message before submitting.");
-                  return;
-                }
-                console.log("Reported issue:", reportText);
-                setShowReportModal(false);
-                setReportText("");
-              }}
-            >
-              Submit
-            </Button>
-          </div>
-        </Modal>
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="bg-[#F4F8ED]/90">
+          <CardHeader className="pb-2">
+            <CardDescription>Available points</CardDescription>
+            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.totalPoints ?? "0"}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">Use points to reserve charging time.</CardContent>
+        </Card>
+        <Card className="bg-[#F4F8ED]/90">
+          <CardHeader className="pb-2">
+            <CardDescription>Total sessions</CardDescription>
+            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.totalSessions ?? 0}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">Completed and active charging records.</CardContent>
+        </Card>
+        <Card className="bg-[#F4F8ED]/90">
+          <CardHeader className="pb-2">
+            <CardDescription>Stations used</CardDescription>
+            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.stationsUsed ?? 0}</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">Unique stations connected to your account.</CardContent>
+        </Card>
       </div>
 
-      {/* Add Points Modal */}
-      <Modal
-        isOpen={showAddPointsModal}
-        onClose={() => setShowAddPointsModal(false)}
-        title="Add Points"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              How many points do you want to add?
-            </label>
-            <input
+      <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+        <Card className="bg-[#F4F8ED]/90 transition-colors hover:border-[#90AB8B]">
+          <CardHeader>
+            <div className="flex size-10 items-center justify-center rounded-xl bg-[#EBF4DD] text-[#3B4953]">
+              <MapPin className="size-5" />
+            </div>
+            <CardTitle>Find stations</CardTitle>
+            <CardDescription>Check station status, queues, distance, and start charging.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" className="w-full justify-start">
+              <Link to="/stations">Open station finder</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-[#F4F8ED]/90">
+          <CardHeader>
+            <CardTitle>Today’s charging readiness</CardTitle>
+            <CardDescription>Useful next actions based on your current account state.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <ReadinessRow
+              icon={<Wallet className="size-4" />}
+              label={availablePoints > 0 ? "You can start a charging session" : "Add points before charging"}
+              detail={availablePoints > 0 ? `${availablePoints} points available for use.` : "Your balance is empty right now."}
+            />
+            <ReadinessRow
+              icon={<Clock className="size-4" />}
+              label={hasChargingHistory ? "History is being tracked" : "No sessions recorded yet"}
+              detail={hasChargingHistory ? `${dashboardData?.totalSessions} charging sessions saved.` : "Start a session to create your first record."}
+            />
+            <ReadinessRow
+              icon={<Route className="size-4" />}
+              label={hasUsedStations ? "You have used stations before" : "Find your first station"}
+              detail={hasUsedStations ? `${dashboardData?.stationsUsed} unique stations connected.` : "Open station finder to choose charger #2 for testing."}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="bg-[#F4F8ED]/90 transition-colors hover:border-[#90AB8B]">
+          <CardHeader>
+            <div className="flex size-10 items-center justify-center rounded-xl bg-[#EBF4DD] text-[#3B4953]">
+              <History className="size-5" />
+            </div>
+            <CardTitle>Charging history</CardTitle>
+            <CardDescription>Review previous sessions, points used, and station details.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" className="w-full justify-start">
+              <Link to="/history">View history</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Sheet open={showAddPoints} onOpenChange={setShowAddPoints}>
+        <SheetContent className="border-l border-border sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Add points</SheetTitle>
+            <SheetDescription>Points are saved to your account and used when starting a charging session.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-3 px-4">
+            <Label htmlFor="points">Points amount</Label>
+            <Input
+              id="points"
               type="number"
               min={1}
               value={addPointsValue}
-              onChange={(e) => setAddPointsValue(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md text-gray-900 focus:ring-2 focus:ring-green-300 focus:border-green-400 focus:outline-none"
+              onChange={(event) => setAddPointsValue(event.target.value)}
               placeholder="e.g. 500"
             />
+            <div className="rounded-xl border bg-[#EBF4DD]/55 p-3 text-sm text-[#3B4953]">
+              <div className="flex items-center gap-2 font-medium">
+                <Wallet className="size-4" />
+                Current balance: {dashboardData?.totalPoints ?? "0"} points
+              </div>
+            </div>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowAddPointsModal(false)}>
-              Cancel
+          <SheetFooter>
+            <Button onClick={handleConfirmAddPoints} disabled={addingPoints}>
+              <BatteryCharging className="size-4" />
+              {addingPoints ? "Adding..." : "Add points"}
             </Button>
-            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleConfirmAddPoints}>
-              Add Points
-            </Button>
-          </div>
-        </div>
-      </Modal>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function ReadinessRow({ icon, label, detail }: { icon: ReactNode; label: string; detail: string }) {
+  return (
+    <div className="flex gap-3 rounded-2xl border border-[#90AB8B]/35 bg-[#EBF4DD]/70 p-3">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#90AB8B]/25 text-[#3B4953]">
+        {icon}
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-[#3B4953]">{label}</p>
+        <p className="text-sm leading-6 text-[#5A7863]">{detail}</p>
+      </div>
     </div>
   );
 }

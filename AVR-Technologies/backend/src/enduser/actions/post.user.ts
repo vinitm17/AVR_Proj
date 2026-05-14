@@ -218,6 +218,45 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
     }
 })
 
+postUserRouter.post("/addPoints", verifyJWT, async (req: userReq, res: Response) => {
+    try {
+        const userId = req.id
+        const { points } = req.body
+        const pointsToAdd = Number(points)
+
+        if (!userId) {
+            return res.status(401).json({ msg: "User not authenticated" })
+        }
+
+        if (!Number.isInteger(pointsToAdd) || pointsToAdd <= 0) {
+            return res.status(400).json({ msg: "Enter a valid points amount" })
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: { id: userId },
+            data: {
+                points: {
+                    increment: BigInt(pointsToAdd)
+                }
+            },
+            select: {
+                points: true
+            }
+        })
+
+        return res.json({
+            msg: "Points added successfully",
+            points: updatedUser.points ? updatedUser.points.toString() : "0"
+        })
+
+    } catch (e) {
+        console.error("Error adding points: ", e)
+        return res.status(500).json({
+            msg: "Failed to add points"
+        })
+    }
+})
+
 
 postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Response) => {
     try {

@@ -45,7 +45,7 @@ app.use("/backend/v1", userRouter);
 app.use("/backend/v1/hw", hwRouter)
 app.use("/backend/v1/operator", operatorRouter)
 
-server.listen(5000, ()=>{console.log("🚀 Server running on http://localhost:5000")})
+server.listen(5000,"0.0.0.0",  ()=>{console.log("🚀 Server running on http://localhost:5000")})
 
 // Graceful shutdown
 process.on("SIGINT", async () => {

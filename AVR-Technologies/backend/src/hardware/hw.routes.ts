@@ -1,2 +1,8 @@
 import { Router } from "express";
-export const hwRouter = Router()
+import testingRouter from "./actions/testing.hardware";
+
+export const hwRouter = Router();
+
+// Mount the testing router
+hwRouter.use(testingRouter);
+

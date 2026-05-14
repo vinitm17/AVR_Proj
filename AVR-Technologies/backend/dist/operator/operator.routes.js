@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.operatorRouter = void 0;
+const express_1 = require("express");
+const get_operator_dashboard_1 = require("../hardware/actions/get.operator-dashboard");
+const operator_admin_1 = require("../hardware/actions/operator.admin");
+exports.operatorRouter = (0, express_1.Router)();
+exports.operatorRouter.use("/get", get_operator_dashboard_1.getOperatorDashboardRouter);
+exports.operatorRouter.use("/get", operator_admin_1.operatorAdminRouter);
+exports.operatorRouter.use("/post", operator_admin_1.operatorAdminRouter);

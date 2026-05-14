@@ -19,6 +19,8 @@ const client_1 = require("@prisma/client");
 const ws_1 = require("ws");
 const user_auth_1 = require("./auth/user.auth");
 const user_routes_1 = require("./enduser/user.routes");
+const hw_routes_1 = require("./hardware/hw.routes");
+const operator_routes_1 = require("./operator/operator.routes");
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 const server = http_1.default.createServer(app);
@@ -46,7 +48,9 @@ app.get("/", (req, res) => {
 });
 app.use("/backend/v1/auth", user_auth_1.authUserRouter);
 app.use("/backend/v1", user_routes_1.userRouter);
-server.listen(5000, () => { console.log("🚀 Server running on http://localhost:5000"); });
+app.use("/backend/v1/hw", hw_routes_1.hwRouter);
+app.use("/backend/v1/operator", operator_routes_1.operatorRouter);
+server.listen(5000, "0.0.0.0", () => { console.log("🚀 Server running on http://localhost:5000"); });
 // Graceful shutdown
 process.on("SIGINT", () => __awaiter(void 0, void 0, void 0, function* () {
     console.log("\n⚠️ Shutting down gracefully...");
