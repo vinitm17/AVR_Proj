@@ -867,80 +867,80 @@ export default function StationsPage() {
 
         {/* Summary Stats */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          <Card>
+          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-muted-foreground text-sm mb-1">Available</p>
-                  <p className="text-2xl font-semibold text-[#3B4953]">
+                  <p className="text-[#5A7863] text-sm mb-1">Available</p>
+                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
                     {stations.filter(s => s.isActive && !s.isOccupied && !s.isFaulty).length}
                   </p>
                 </div>
-                <div className="w-10 h-10 bg-[#EBF4DD] rounded-xl flex items-center justify-center text-[#3B4953]">
+                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
                   <CheckCircle className="w-5 h-5" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-muted-foreground text-sm mb-1">Occupied</p>
-                  <p className="text-2xl font-semibold text-[#3B4953]">
+                  <p className="text-[#5A7863] text-sm mb-1">Occupied</p>
+                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
                     {stations.filter(s => s.isOccupied).length}
                   </p>
                 </div>
-                <div className="w-10 h-10 bg-[#EBF4DD] rounded-xl flex items-center justify-center text-[#3B4953]">
+                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
                   <Clock className="w-5 h-5" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-muted-foreground text-sm mb-1">Queued</p>
-                  <p className="text-2xl font-semibold text-[#3B4953]">
+                  <p className="text-[#5A7863] text-sm mb-1">Queued</p>
+                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
                     {stations.filter(s => s.queue && s.queue.count > 0).length}
                   </p>
                 </div>
-                <div className="w-10 h-10 bg-[#EBF4DD] rounded-xl flex items-center justify-center text-[#3B4953]">
+                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
                   <Users className="w-5 h-5" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-muted-foreground text-sm mb-1">Faulty</p>
-                  <p className="text-2xl font-semibold text-[#3B4953]">
+                  <p className="text-[#5A7863] text-sm mb-1">Faulty</p>
+                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
                     {stations.filter(s => s.isFaulty).length}
                   </p>
                 </div>
-                <div className="w-10 h-10 bg-[#EBF4DD] rounded-xl flex items-center justify-center text-[#3B4953]">
+                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
                   <XCircle className="w-5 h-5" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-muted-foreground text-sm mb-1">Inactive</p>
-                  <p className="text-2xl font-semibold text-[#3B4953]">
+                  <p className="text-[#5A7863] text-sm mb-1">Inactive</p>
+                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
                     {stations.filter(s => !s.isActive).length}
                   </p>
                 </div>
-                <div className="w-10 h-10 bg-[#EBF4DD] rounded-xl flex items-center justify-center text-[#3B4953]">
+                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
                   <XCircle className="w-5 h-5" />
                 </div>
               </div>
@@ -1326,28 +1326,13 @@ function StationDetailModal({
 
   return (
     <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()} direction="right">
-      <DrawerContent className="h-full overflow-hidden border-l border-border bg-background sm:max-w-xl">
+      <DrawerContent className="h-full !w-[min(1180px,calc(100vw-1rem))] overflow-hidden border-l border-border bg-background sm:!max-w-none">
         <DrawerHeader className="border-b border-border px-6 py-5 text-left">
           <DrawerTitle className="text-xl text-[#3B4953]">Station #{station.id} details</DrawerTitle>
           <DrawerDescription>{station.location}</DrawerDescription>
         </DrawerHeader>
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(360px,0.9fr)_minmax(460px,1.1fr)]">
         <div className="space-y-6 overflow-y-auto px-6 py-5">
-        {/* Map Preview */}
-        {mapSrc && (
-          <div className="rounded-lg overflow-hidden border border-[#90AB8B]/40">
-            <iframe
-              src={mapSrc}
-              width="100%"
-              height="260"
-              style={{ border: 0 }}
-              allowFullScreen
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-              title={userLocation ? `Directions to station ${station.id}` : `Station ${station.id} map`}
-            />
-          </div>
-        )}
-
         {/* Station Info */}
         <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
           <h3 className="font-semibold text-lg text-blue-800 mb-3 flex items-center">
@@ -1705,6 +1690,34 @@ function StationDetailModal({
           <Button variant="outline" onClick={onClose} className="border-[#90AB8B]/60 text-[#5A7863] hover:bg-[#EBF4DD]/55">
             Close
           </Button>
+        </div>
+        </div>
+        <div className="min-h-[320px] border-t border-[#90AB8B]/40 bg-[#DDE9D0] p-3 lg:min-h-0 lg:border-l lg:border-t-0">
+          {mapSrc ? (
+            <div className="h-full overflow-hidden rounded-2xl border border-[#90AB8B]/50 bg-[#EBF4DD]">
+              <iframe
+                src={mapSrc}
+                width="100%"
+                height="100%"
+                className="h-full min-h-[320px] w-full lg:min-h-0"
+                style={{ border: 0 }}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                title={userLocation ? `Directions to station ${station.id}` : `Station ${station.id} map`}
+              />
+            </div>
+          ) : (
+            <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-[#90AB8B]/60 bg-[#EBF4DD] p-6 text-center">
+              <div>
+                <MapPin className="mx-auto mb-3 size-8 text-[#5A7863]" />
+                <p className="text-sm font-semibold text-[#3B4953]">Map unavailable</p>
+                <p className="mt-1 max-w-xs text-sm text-[#5A7863]">
+                  This station does not have map coordinates or an embedded map configured yet.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
         </div>
       </DrawerContent>
