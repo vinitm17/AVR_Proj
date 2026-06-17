@@ -16,6 +16,7 @@ exports.postUserRouter = void 0;
 const express_1 = __importDefault(require("express"));
 const auth_middleware_1 = require("../../middleware/auth.middleware");
 const client_1 = require("@prisma/client");
+const station_state_1 = require("./station-state");
 exports.postUserRouter = (0, express_1.default)();
 const prisma = new client_1.PrismaClient();
 exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -28,6 +29,7 @@ exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) =
                 msg: "User not authenticated"
             });
         }
+        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
         const chargingStation = yield prisma.chargingStation.findUnique({
             where: {
                 id: CID
@@ -92,6 +94,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 msg: "User not authenticated"
             });
         }
+        yield (0, station_state_1.reconcileChargingState)(prisma);
         const user = yield prisma.user.findUnique({
             where: { id: userId }
         });
@@ -114,6 +117,23 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 msg: "Insufficient coins for requested charging amount"
             });
         }
+        const existingActiveSession = yield prisma.sessions.findFirst({
+            where: {
+                userId,
+                isActive: true
+            },
+            select: {
+                stationId: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        if (existingActiveSession) {
+            return res.status(400).json({
+                msg: `You already have an active charging session at station #${existingActiveSession.stationId}. Stop it before starting another one.`
+            });
+        }
         if (station.isOccupied || !station.isActive || station.isFaulty) {
             return res.status(400).json({
                 msg: "Station is not available for charging"
@@ -121,10 +141,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
         }
         // Check queue - if there's a queue, only position 1 can start
         const queueEntries = yield prisma.stationQueue.findMany({
-            where: {
-                stationId: CID,
-                status: "WAITING"
-            },
+            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
             orderBy: { position: 'asc' }
         });
         if (queueEntries.length > 0) {
@@ -142,6 +159,13 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
         // Get the points to reserve (either custom or all available)
         const pointsToReserve = customPoints || user.points;
         const estimatedDuration = customPoints ? Number(customPoints) * 5 : null; // 5 min per point
+        // Prevent unrealistic session durations (max 8 hours = 480 minutes)
+        if (estimatedDuration && estimatedDuration > 480) {
+            return res.status(400).json({
+                msg: "Session duration cannot exceed 8 hours (480 minutes). Please use fewer points.",
+                maxAllowedPoints: 96
+            });
+        }
         const [updatedStation, newSession, updatedUser] = yield prisma.$transaction([
             prisma.chargingStation.update({
                 where: { id: CID },
@@ -180,13 +204,13 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
         });
         // Recalculate queue positions
         const remainingQueue = yield prisma.stationQueue.findMany({
-            where: { stationId: CID, status: "WAITING" },
+            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
             orderBy: { position: 'asc' }
         });
         for (let i = 0; i < remainingQueue.length; i++) {
             yield prisma.stationQueue.update({
                 where: { id: remainingQueue[i].id },
-                data: { position: i + 1 }
+                data: { position: i + 1, status: "WAITING" }
             });
         }
         res.json({
@@ -270,14 +294,8 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
         const startTime = session.createdAt;
         const endTime = new Date();
         const totalMs = endTime.getTime() - startTime.getTime();
-        const totalMinutes = Math.ceil(totalMs / 60000);
-        // Ensure minimum charging time of 1 minute
-        if (totalMinutes < 1) {
-            return res.status(400).json({
-                msg: "Minimum charging time is 1 minute. Please wait before stopping."
-            });
-        }
-        // If user has already paid for this session (using custom points), 
+        const totalMinutes = Math.max(1, Math.ceil(totalMs / 60000));
+        // If user has already paid for this session (using custom points),
         // we don't need to deduct points again
         if (session.pointsUsed > BigInt(0)) {
             // Session already has points allocated, just mark it as complete

@@ -15,6 +15,7 @@ function main() {
     return __awaiter(this, void 0, void 0, function* () {
         console.log('🌱 Starting to seed database...');
         // Clear existing data (optional - comment out if you want to keep existing data)
+        yield prisma.stationQueue.deleteMany({});
         yield prisma.sessions.deleteMany({});
         yield prisma.transactions.deleteMany({});
         yield prisma.chargingStation.deleteMany({});
@@ -169,10 +170,10 @@ function main() {
                 OEMId: oem1.id,
                 resellerId: reseller1.id,
                 operatorId: operator1.id,
-                connectedUserID: endUser1.id,
+                connectedUserID: null,
                 totalEnergyConsumption: BigInt(15000),
                 healthPercentage: 95,
-                isOccupied: true,
+                isOccupied: false,
                 latitude: 16.8472558,
                 longitude: 74.5987356,
                 mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d432.8030714416994!2d74.59873562066275!3d16.84725578534954!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3bc123007d046a15%3A0x51abb635d9ba80a0!2sEffotel%20by%20Sayaji%2C%20Sangli!5e0!3m2!1sen!2sin!4v1777801055197!5m2!1sen!2sin" width="600" height="450" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`,
@@ -237,10 +238,10 @@ function main() {
                 OEMId: oem1.id,
                 resellerId: reseller2.id,
                 operatorId: operator1.id,
-                connectedUserID: endUser2.id,
+                connectedUserID: null,
                 totalEnergyConsumption: BigInt(27800),
                 healthPercentage: 96,
-                isOccupied: true,
+                isOccupied: false,
                 latitude: 19.166445,
                 longitude: 72.936014,
                 mapIframe: `<iframe src="https://www.google.com/maps/embed?pb=!1m14!1m8!1m3!1d60298.52692515201!2d72.936014!3d19.166445!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3be7b913585fc533%3A0x4c5fa5cf22f5bd5d!2sPiramal%20Revanta%20Sales%20Office!5e0!3m2!1sen!2sin!4v1732468527570!5m2!1sen!2sin" width="100%" height="450" loading="lazy" referrerpolicy="no-referrer-when-downgrade" style="border: 0px;"></iframe>`,

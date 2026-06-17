@@ -66,8 +66,10 @@ interface StationDetailModalProps {
   onJoinQueue: (stationId: number) => void;
   onLeaveQueue: (stationId: number) => void;
   isCharging: boolean;
+  hasActiveSessionElsewhere: boolean;
   loading: boolean;
   queueLoading: boolean;
+  onRefreshStations: () => Promise<void>;
 }
 
 interface UserData {
@@ -262,11 +264,12 @@ export default function StationsPage() {
       setStations(enhancedStations);
       setFilteredStations(enhancedStations);
 
-      // Update selected station if modal is open
-      if (selectedStation) {
-        const updated = enhancedStations.find((s: Station) => s.id === selectedStation.id);
-        if (updated) setSelectedStation(updated);
-      }
+      // Update selected station if modal is open - this will be called with the CURRENT selectedStation
+      setSelectedStation((prevSelected) => {
+        if (!prevSelected) return prevSelected;
+        const updated = enhancedStations.find((s: Station) => s.id === prevSelected.id);
+        return updated || prevSelected;
+      });
 
       setError("");
     } catch (err) {
@@ -275,7 +278,7 @@ export default function StationsPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [selectedStation]);
+  }, []);
 
   useEffect(() => {
     fetchStations();
@@ -363,8 +366,8 @@ export default function StationsPage() {
         });
       }
 
-      // Fresh fetch so modal gets real activeSession + isCurrentUserCharging + estimated time
-      await fetchStations(true);
+      // Refresh in background — don't block so local timer starts immediately
+      fetchStations(true);
 
     } catch (err: unknown) {
       console.error("Error starting charging:", err);
@@ -412,11 +415,20 @@ export default function StationsPage() {
       setQueueLoading(true);
       const response = await api.post("/post/joinQueue", { CID: stationId });
       toast.success(response.data.msg || "Joined the queue successfully");
-      await fetchStations(true);
+
+      // Optimistic update so modal reflects queue position immediately
+      const newPosition = response.data.queue?.position as number | undefined;
+      if (newPosition) {
+        setSelectedStation(prev => {
+          if (!prev || prev.id !== stationId) return prev;
+          return { ...prev, queue: { count: (prev.queue?.count || 0) + 1, userPosition: newPosition, userStatus: "WAITING" } };
+        });
+      }
+
+      fetchStations(true);
     } catch (err: unknown) {
       console.error("Error joining queue:", err);
-      const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to join queue.";
-      toast.error(errorMessage);
+      toast.error((err as ApiError)?.response?.data?.msg || "Failed to join queue.");
     } finally {
       setQueueLoading(false);
     }
@@ -427,11 +439,17 @@ export default function StationsPage() {
       setQueueLoading(true);
       const response = await api.post("/post/leaveQueue", { CID: stationId });
       toast.success(response.data.msg || "Left the queue successfully");
-      await fetchStations(true);
+
+      // Optimistic update so modal removes queue position immediately
+      setSelectedStation(prev => {
+        if (!prev || prev.id !== stationId) return prev;
+        return { ...prev, queue: { count: Math.max(0, (prev.queue?.count || 0) - 1), userPosition: null, userStatus: null } };
+      });
+
+      fetchStations(true);
     } catch (err: unknown) {
       console.error("Error leaving queue:", err);
-      const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to leave queue.";
-      toast.error(errorMessage);
+      toast.error((err as ApiError)?.response?.data?.msg || "Failed to leave queue.");
     } finally {
       setQueueLoading(false);
     }
@@ -1142,27 +1160,31 @@ export default function StationsPage() {
         onJoinQueue={handleJoinQueue}
         onLeaveQueue={handleLeaveQueue}
         isCharging={selectedStation ? (chargingStations.has(selectedStation.id) || selectedStation.isCurrentUserCharging) : false}
+        hasActiveSessionElsewhere={stations.some(s => s.isCurrentUserCharging && s.id !== selectedStation?.id)}
         loading={selectedStation ? actionLoading === selectedStation.id : false}
         queueLoading={queueLoading}
+        onRefreshStations={() => fetchStations(true)}
       />
     </div>
   );
 }
 
 // Station Detail Modal Component
-function StationDetailModal({ 
-  isOpen, 
-  onClose, 
-  station, 
+function StationDetailModal({
+  isOpen,
+  onClose,
+  station,
   userLocation,
-  userData, 
+  userData,
   onStartCharging,
   onStopCharging,
   onJoinQueue,
   onLeaveQueue,
   isCharging,
+  hasActiveSessionElsewhere,
   loading,
-  queueLoading
+  queueLoading,
+  onRefreshStations
 }: StationDetailModalProps) {
   const userPoints = userData?.points ? parseInt(userData.points) : 0;
   const [localUserPoints, setLocalUserPoints] = useState(userPoints);
@@ -1188,8 +1210,12 @@ function StationDetailModal({
       const diff = freeAt - now;
 
       if (diff <= 0) {
-        setCountdown("Finishing up...");
-        return;
+        setCountdown("It's available now");
+        // Call parent's refresh function to update station data
+        const refreshTimeout = setTimeout(() => {
+          onRefreshStations();
+        }, 1000);
+        return () => clearTimeout(refreshTimeout);
       }
 
       const hours = Math.floor(diff / 3600000);
@@ -1208,7 +1234,7 @@ function StationDetailModal({
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [station?.activeSession?.estimatedFreeAt]);
+  }, [station?.activeSession?.estimatedFreeAt, onRefreshStations]);
 
   // sync pointsToUse when modal opens or userPoints change
   useEffect(() => {
@@ -1268,6 +1294,7 @@ function StationDetailModal({
       toast.success("Charging session completed", {
         description: "Saved to history",
       });
+      onRefreshStations();
     }
   }, [localRemainingSeconds, localSessionActive, localSessionStartPoints, localSpentPoints, localTotalSeconds, pointsToUse, station]);
 
@@ -1294,6 +1321,12 @@ function StationDetailModal({
 
   const handleLocalStartCharging = async () => {
     if (!station) return;
+
+    if (hasActiveSessionElsewhere) {
+      toast.error("You already have an active charging session at another station. Stop it first.");
+      return;
+    }
+    
     if (pointsToUse <= 0 || pointsToUse > localUserPoints) {
       toast.error("Enter a valid points amount");
       return;
@@ -1322,6 +1355,7 @@ function StationDetailModal({
   const isUserInQueue = station.queue?.userPosition !== null && station.queue?.userPosition > 0;
   const isFirstInQueue = station.queue?.userPosition === 1;
   const isNotified = station.queue?.userStatus === "NOTIFIED";
+  const hasQueueAhead = Boolean(station.queue?.count && !isFirstInQueue);
   const mapSrc = buildMapSrc(station, userLocation);
 
   return (
@@ -1553,7 +1587,7 @@ function StationDetailModal({
                 <div>
                   <p className="text-sm font-semibold text-red-800">Queue active</p>
                   <p className="text-xs text-red-700">
-                    There are {station.queue.count} people waiting in queue. Join the queue to wait for your turn.
+                    This station is available for the queued customer at position #1.
                   </p>
                 </div>
               </div>
@@ -1566,7 +1600,9 @@ function StationDetailModal({
                 <div>
                   <p className="text-sm font-semibold text-green-800">You have priority!</p>
                   <p className="text-xs text-green-700">
-                    You are #1 in the queue. Start charging now before your turn expires!
+                    {isNotified
+                      ? "It's your turn. Start charging now before your turn expires!"
+                      : "You are #1 in the queue. Start charging when the station is free."}
                   </p>
                 </div>
               </div>
@@ -1624,7 +1660,7 @@ function StationDetailModal({
               <Button
                 className="w-full bg-[#3B4953] hover:bg-[#5A7863] text-[#EBF4DD]"
                 onClick={handleLocalStartCharging}
-                disabled={loading || localSessionActive || pointsToUse <= 0 || pointsToUse > localUserPoints}
+                disabled={loading || localSessionActive || hasQueueAhead || hasActiveSessionElsewhere || pointsToUse <= 0 || pointsToUse > localUserPoints}
               >
                 {loading ? (
                   <>

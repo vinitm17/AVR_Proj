@@ -3,6 +3,7 @@ import { verifyJWT } from "../../middleware/auth.middleware"
 import { PrismaClient } from "@prisma/client"
 import { Request, Response } from "express"
 import { userReq } from "../../middleware/auth.middleware"
+import { activeQueueWhere, reconcileChargingState } from "./station-state"
 
 export const postUserRouter = Router()
 const prisma = new PrismaClient()
@@ -17,6 +18,8 @@ postUserRouter.post("/scanQR", verifyJWT, async (req: userReq, res: Response) =>
                 msg: "User not authenticated"
             })
         }
+
+        await reconcileChargingState(prisma, CID)
 
         const chargingStation = await prisma.chargingStation.findUnique({
             where: {
@@ -90,6 +93,8 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             })
         }
 
+        await reconcileChargingState(prisma)
+
         const user = await prisma.user.findUnique({
             where: { id: userId }
         })
@@ -117,6 +122,25 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             })
         }
 
+        const existingActiveSession = await prisma.sessions.findFirst({
+            where: {
+                userId,
+                isActive: true
+            },
+            select: {
+                stationId: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        })
+
+        if (existingActiveSession) {
+            return res.status(400).json({
+                msg: `You already have an active charging session at station #${existingActiveSession.stationId}. Stop it before starting another one.`
+            })
+        }
+
         if (station.isOccupied || !station.isActive || station.isFaulty) {
             return res.status(400).json({
                 msg: "Station is not available for charging"
@@ -127,7 +151,7 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
         const queueEntries = await prisma.stationQueue.findMany({
             where: {
                 stationId: CID,
-                status: "WAITING"
+                ...activeQueueWhere
             },
             orderBy: { position: 'asc' }
         })
@@ -148,6 +172,14 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
         // Get the points to reserve (either custom or all available)
         const pointsToReserve = customPoints || user.points
         const estimatedDuration = customPoints ? Number(customPoints) * 5 : null  // 5 min per point
+
+        // Prevent unrealistic session durations (max 8 hours = 480 minutes)
+        if (estimatedDuration && estimatedDuration > 480) {
+            return res.status(400).json({
+                msg: "Session duration cannot exceed 8 hours (480 minutes). Please use fewer points.",
+                maxAllowedPoints: 96
+            })
+        }
 
         const [updatedStation, newSession, updatedUser] = await prisma.$transaction([
             prisma.chargingStation.update({
@@ -189,13 +221,13 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
 
         // Recalculate queue positions
         const remainingQueue = await prisma.stationQueue.findMany({
-            where: { stationId: CID, status: "WAITING" },
+            where: { stationId: CID, ...activeQueueWhere },
             orderBy: { position: 'asc' }
         })
         for (let i = 0; i < remainingQueue.length; i++) {
             await prisma.stationQueue.update({
                 where: { id: remainingQueue[i].id },
-                data: { position: i + 1 }
+                data: { position: i + 1, status: "WAITING" }
             })
         }
 
@@ -293,16 +325,9 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
         const startTime = session.createdAt
         const endTime = new Date()
         const totalMs = endTime.getTime() - startTime.getTime()
-        const totalMinutes = Math.ceil(totalMs / 60000)
+        const totalMinutes = Math.max(1, Math.ceil(totalMs / 60000))
 
-        // Ensure minimum charging time of 1 minute
-        if (totalMinutes < 1) {
-            return res.status(400).json({ 
-                msg: "Minimum charging time is 1 minute. Please wait before stopping." 
-            })
-        }
-
-        // If user has already paid for this session (using custom points), 
+        // If user has already paid for this session (using custom points),
         // we don't need to deduct points again
         if (session.pointsUsed > BigInt(0)) {
             // Session already has points allocated, just mark it as complete

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { verifyJWT, userReq } from "../../middleware/auth.middleware";
+import { activeQueueWhere, reconcileChargingState } from "./station-state";
 
 export const postQueueRouter = Router()
 const prisma = new PrismaClient()
@@ -20,6 +21,8 @@ postQueueRouter.post("/joinQueue", verifyJWT, async (req: userReq, res: Response
             return res.status(400).json({ msg: "Station ID (CID) is required" });
         }
 
+        await reconcileChargingState(prisma, CID);
+
         const station = await prisma.chargingStation.findUnique({
             where: { id: CID }
         });
@@ -28,7 +31,15 @@ postQueueRouter.post("/joinQueue", verifyJWT, async (req: userReq, res: Response
             return res.status(404).json({ msg: "Station not found" });
         }
 
-        if (!station.isOccupied) {
+        const activeQueue = await prisma.stationQueue.findMany({
+            where: {
+                stationId: CID,
+                ...activeQueueWhere
+            },
+            orderBy: { position: 'asc' }
+        });
+
+        if (!station.isOccupied && activeQueue.length === 0) {
             return res.status(400).json({ 
                 msg: "Station is available. You can start charging directly without joining the queue." 
             });
@@ -46,7 +57,9 @@ postQueueRouter.post("/joinQueue", verifyJWT, async (req: userReq, res: Response
 
         if (existingEntry && (existingEntry.status === "WAITING" || existingEntry.status === "NOTIFIED")) {
             return res.status(400).json({ 
-                msg: `You are already in the queue at position #${existingEntry.position}`,
+                msg: existingEntry.status === "NOTIFIED"
+                    ? "It's your turn. The station is available for you now."
+                    : `You are already in the queue at position #${existingEntry.position}`,
                 position: existingEntry.position,
                 status: existingEntry.status
             });
@@ -63,7 +76,7 @@ postQueueRouter.post("/joinQueue", verifyJWT, async (req: userReq, res: Response
         const maxPosition = await prisma.stationQueue.aggregate({
             where: {
                 stationId: CID,
-                status: { in: ["WAITING", "NOTIFIED"] }
+                ...activeQueueWhere
             },
             _max: { position: true }
         });
@@ -126,6 +139,8 @@ postQueueRouter.post("/leaveQueue", verifyJWT, async (req: userReq, res: Respons
             return res.status(400).json({ msg: "Station ID (CID) is required" });
         }
 
+        await reconcileChargingState(prisma, CID);
+
         const queueEntry = await prisma.stationQueue.findUnique({
             where: {
                 stationId_userId: {
@@ -148,7 +163,7 @@ postQueueRouter.post("/leaveQueue", verifyJWT, async (req: userReq, res: Respons
         const remainingQueue = await prisma.stationQueue.findMany({
             where: {
                 stationId: CID,
-                status: { in: ["WAITING", "NOTIFIED"] }
+                ...activeQueueWhere
             },
             orderBy: { position: 'asc' }
         });

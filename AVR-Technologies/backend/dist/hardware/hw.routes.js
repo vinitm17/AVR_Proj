@@ -9,3 +9,4 @@ const testing_hardware_1 = __importDefault(require("./actions/testing.hardware")
 exports.hwRouter = (0, express_1.Router)();
 // Mount the testing router
 exports.hwRouter.use(testing_hardware_1.default);
+//qr scan, hardware integration

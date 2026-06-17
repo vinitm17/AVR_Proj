@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { LogOut, MapPin, Settings, Wrench, Wallet, Zap, BarChart, Users, ArrowLeft, PlusCircle, Trash2, Search, Activity } from "lucide-react";
+import { LogOut, MapPin, Settings, Wrench, Wallet, BarChart, Users, ArrowLeft, PlusCircle, Trash2, Search, Activity } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 

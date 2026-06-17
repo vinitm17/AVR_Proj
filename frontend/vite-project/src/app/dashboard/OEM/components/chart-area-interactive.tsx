@@ -262,11 +262,15 @@ export function ChartAreaInteractive() {
               defaultIndex={isMobile ? -1 : 10}
               content={
                 <ChartTooltipContent
-                  labelFormatter={(value) => {
-                    return new Date(value).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })
+	                  labelFormatter={(value) => {
+	                    if (typeof value !== "string" && typeof value !== "number" && !(value instanceof Date)) {
+	                      return ""
+	                    }
+
+	                    return new Date(value).toLocaleDateString("en-US", {
+	                      month: "short",
+	                      day: "numeric",
+	                    })
                   }}
                   indicator="dot"
                 />

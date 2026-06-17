@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { BatteryCharging, Clock, History, MapPin, Plus, Route, Wallet } from "lucide-react";
+import { BatteryCharging, Clock, History, MapPin, Route, Wallet, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import api from "../lib/api";
+
+const RAZORPAY_KEY = import.meta.env.VITE_RAZORPAY_KEY_ID as string;
+const RAZORPAY_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
 
 interface DashboardData {
   userName: string;
@@ -19,50 +21,118 @@ interface DashboardData {
   role: string;
 }
 
+const PLANS = [
+  { points: 100, price: 99, label: "Starter", minutes: 500 },
+  { points: 500, price: 399, label: "Popular", minutes: 2500, badge: true },
+  { points: 1000, price: 749, label: "Best Value", minutes: 5000 },
+] as const;
+
+type Plan = typeof PLANS[number];
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise(resolve => {
+    if (document.getElementById("razorpay-script")) { resolve(true); return; }
+    const script = document.createElement("script");
+    script.id = "razorpay-script";
+    script.src = RAZORPAY_SCRIPT;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export default function Home() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showAddPoints, setShowAddPoints] = useState(false);
-  const [addPointsValue, setAddPointsValue] = useState("");
-  const [addingPoints, setAddingPoints] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [customPoints, setCustomPoints] = useState("");
+  const [paying, setPaying] = useState(false);
+  const rzpRef = useRef<RazorpayInstance | null>(null);
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
       const response = await api.get("/get/dashboard");
       setDashboardData(response.data.data);
-    } catch (err) {
-      console.error("Error fetching dashboard data:", err);
+    } catch {
       toast.error("Failed to load dashboard data.");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
+  useEffect(() => { loadDashboardData(); }, []);
 
-  const handleConfirmAddPoints = async () => {
-    const parsed = Number(addPointsValue);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      toast.error("Enter a valid points amount");
+  const effectivePoints = selectedPlan
+    ? selectedPlan.points
+    : Math.max(0, Math.floor(Number(customPoints)));
+
+  const effectivePrice = selectedPlan
+    ? selectedPlan.price
+    : Math.ceil(effectivePoints * 0.99);
+
+  const handleProceedToPay = async () => {
+    if (effectivePoints <= 0) {
+      toast.error("Select a plan or enter a valid amount");
       return;
     }
 
-    try {
-      setAddingPoints(true);
-      const response = await api.post("/post/addPoints", { points: parsed });
-      setDashboardData((current) => current ? { ...current, totalPoints: response.data.points } : current);
-      setShowAddPoints(false);
-      setAddPointsValue("");
-      toast.success("Points added", { description: `Added ${parsed} points` });
-    } catch (err) {
-      console.error("Error adding points:", err);
-      toast.error("Failed to add points. Please try again.");
-    } finally {
-      setAddingPoints(false);
+    setPaying(true);
+    const loaded = await loadRazorpayScript();
+    if (!loaded || !window.Razorpay) {
+      toast.error("Could not load payment gateway. Check your connection.");
+      setPaying(false);
+      return;
     }
+
+    const options: RazorpayOptions = {
+      key: RAZORPAY_KEY,
+      amount: effectivePrice * 100, // paise
+      currency: "INR",
+      name: "AVR Technologies",
+      description: `${effectivePoints} Charging Points`,
+      handler: async (response) => {
+        try {
+          const res = await api.post("/post/addPoints", { points: effectivePoints });
+          setDashboardData(current =>
+            current ? { ...current, totalPoints: res.data.points } : current
+          );
+          setShowSheet(false);
+          setSelectedPlan(null);
+          setCustomPoints("");
+          toast.success(`${effectivePoints} points added!`, {
+            description: `Payment ID: ${response.razorpay_payment_id}`,
+          });
+        } catch {
+          toast.error("Payment received but failed to credit points. Contact support.");
+        }
+      },
+      prefill: {
+        name: dashboardData?.userName,
+        email: dashboardData?.email,
+      },
+      theme: { color: "#3B4953" },
+      modal: {
+        ondismiss: () => setPaying(false),
+        escape: true,
+      },
+    };
+
+    const rzp = new window.Razorpay(options);
+    rzpRef.current = rzp;
+    rzp.on("payment.failed", () => {
+      toast.error("Payment failed. Please try again.");
+      setPaying(false);
+    });
+    rzp.open();
+    setPaying(false);
+  };
+
+  const handleCloseSheet = () => {
+    setShowSheet(false);
+    setSelectedPlan(null);
+    setCustomPoints("");
   };
 
   if (loading) {
@@ -79,11 +149,11 @@ export default function Home() {
       <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]/90">
         <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
           <div>
-          <p className="text-sm font-medium text-[#5A7863]">Welcome back</p>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-[#3B4953]">{dashboardData?.userName ?? "Your dashboard"}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Manage your charging points, find stations, and review previous sessions from one clean workspace.
-          </p>
+            <p className="text-sm font-medium text-[#5A7863]">Welcome back</p>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-[#3B4953]">{dashboardData?.userName ?? "Your dashboard"}</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+              Manage your charging points, find stations, and review previous sessions from one clean workspace.
+            </p>
           </div>
           <div className="rounded-2xl border border-[#90AB8B]/45 bg-[#EBF4DD] p-4">
             <div className="flex items-start justify-between gap-4">
@@ -92,8 +162,11 @@ export default function Home() {
                 <p className="mt-1 text-4xl font-semibold tracking-[-0.04em] text-[#3B4953]">{availablePoints}</p>
                 <p className="mt-1 text-sm text-[#5A7863]">points available</p>
               </div>
-              <Button onClick={() => setShowAddPoints(true)} className="shrink-0">
-                <Plus className="size-4" />
+              <Button
+                onClick={() => setShowSheet(true)}
+                className="shrink-0 bg-[#3B4953] hover:bg-[#5A7863]"
+              >
+                <Zap className="size-4" />
                 Add
               </Button>
             </div>
@@ -146,7 +219,7 @@ export default function Home() {
 
         <Card className="bg-[#F4F8ED]/90">
           <CardHeader>
-            <CardTitle>Today’s charging readiness</CardTitle>
+            <CardTitle>Today's charging readiness</CardTitle>
             <CardDescription>Useful next actions based on your current account state.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -163,7 +236,7 @@ export default function Home() {
             <ReadinessRow
               icon={<Route className="size-4" />}
               label={hasUsedStations ? "You have used stations before" : "Find your first station"}
-              detail={hasUsedStations ? `${dashboardData?.stationsUsed} unique stations connected.` : "Open station finder to choose charger #2 for testing."}
+              detail={hasUsedStations ? `${dashboardData?.stationsUsed} unique stations connected.` : "Open station finder to choose a charger."}
             />
           </CardContent>
         </Card>
@@ -186,35 +259,106 @@ export default function Home() {
         </Card>
       </div>
 
-      <Sheet open={showAddPoints} onOpenChange={setShowAddPoints}>
-        <SheetContent className="border-l border-border sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>Add points</SheetTitle>
-            <SheetDescription>Points are saved to your account and used when starting a charging session.</SheetDescription>
+      {/* Plan selection sheet */}
+      <Sheet open={showSheet} onOpenChange={open => { if (!open) handleCloseSheet(); }}>
+        <SheetContent className="border-l border-border sm:max-w-md overflow-y-auto">
+          <SheetHeader className="mb-6">
+            <SheetTitle>Add charging points</SheetTitle>
+            <SheetDescription>
+              Select a plan or enter a custom amount. Payment powered by Razorpay.
+            </SheetDescription>
           </SheetHeader>
-          <div className="space-y-3 px-4">
-            <Label htmlFor="points">Points amount</Label>
-            <Input
-              id="points"
-              type="number"
-              min={1}
-              value={addPointsValue}
-              onChange={(event) => setAddPointsValue(event.target.value)}
-              placeholder="e.g. 500"
-            />
-            <div className="rounded-xl border bg-[#EBF4DD]/55 p-3 text-sm text-[#3B4953]">
-              <div className="flex items-center gap-2 font-medium">
-                <Wallet className="size-4" />
-                Current balance: {dashboardData?.totalPoints ?? "0"} points
+
+          <div className="space-y-5 px-4 pb-8">
+            {/* Plan cards */}
+            <div className="space-y-3">
+              {PLANS.map(plan => (
+                <button
+                  key={plan.points}
+                  onClick={() => { setSelectedPlan(plan); setCustomPoints(""); }}
+                  className={`w-full text-left rounded-xl border-2 p-4 transition-all ${
+                    selectedPlan?.points === plan.points
+                      ? "border-[#3B4953] bg-[#EBF4DD]"
+                      : "border-[#90AB8B]/40 bg-[#F4F8ED] hover:border-[#5A7863]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-[#3B4953]">{plan.points} points</span>
+                        {'badge' in plan && plan.badge && (
+                          <span className="rounded-full bg-[#3B4953] px-2 py-0.5 text-xs font-medium text-[#EBF4DD]">Popular</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-[#5A7863] mt-0.5">~{plan.minutes} min of charging</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xl font-bold text-[#3B4953]">₹{plan.price}</p>
+                      <p className="text-xs text-[#5A7863]">₹{(plan.price / plan.points).toFixed(2)}/pt</p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Custom amount */}
+            <div>
+              <p className="text-sm font-medium text-[#3B4953] mb-2">Or enter custom points</p>
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="e.g. 250"
+                  value={customPoints}
+                  onChange={e => { setCustomPoints(e.target.value); setSelectedPlan(null); }}
+                  className="flex-1"
+                />
+                <div className="flex items-center justify-center rounded-lg border border-[#90AB8B]/40 bg-[#EBF4DD] px-3 text-sm font-semibold text-[#3B4953] min-w-[72px]">
+                  {effectivePoints > 0 ? `₹${effectivePrice}` : "₹—"}
+                </div>
               </div>
             </div>
-          </div>
-          <SheetFooter>
-            <Button onClick={handleConfirmAddPoints} disabled={addingPoints}>
-              <BatteryCharging className="size-4" />
-              {addingPoints ? "Adding..." : "Add points"}
+
+            {/* Summary */}
+            {effectivePoints > 0 && (
+              <div className="rounded-xl border border-[#90AB8B]/40 bg-[#EBF4DD]/70 p-3 text-sm space-y-1">
+                <div className="flex justify-between text-[#3B4953]">
+                  <span>Points</span>
+                  <span className="font-semibold">{effectivePoints}</span>
+                </div>
+                <div className="flex justify-between text-[#3B4953]">
+                  <span>Charging time</span>
+                  <span className="font-semibold">~{effectivePoints * 5} min</span>
+                </div>
+                <div className="flex justify-between text-[#3B4953] pt-1 border-t border-[#90AB8B]/40">
+                  <span className="font-semibold">Total</span>
+                  <span className="font-bold">₹{effectivePrice}</span>
+                </div>
+              </div>
+            )}
+
+            <Button
+              className="w-full bg-[#3B4953] hover:bg-[#5A7863] text-[#EBF4DD]"
+              onClick={handleProceedToPay}
+              disabled={effectivePoints <= 0 || paying}
+            >
+              {paying ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-[#EBF4DD] border-t-transparent rounded-full animate-spin mr-2" />
+                  Opening Razorpay...
+                </>
+              ) : (
+                <>
+                  <BatteryCharging className="size-4 mr-2" />
+                  Pay ₹{effectivePoints > 0 ? effectivePrice : "—"} via Razorpay
+                </>
+              )}
             </Button>
-          </SheetFooter>
+
+            <p className="text-xs text-center text-[#5A7863]">
+              Secured by Razorpay · Test mode active
+            </p>
+          </div>
         </SheetContent>
       </Sheet>
     </div>

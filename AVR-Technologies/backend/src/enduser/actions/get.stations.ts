@@ -3,6 +3,7 @@ import { Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import Jwt from "jsonwebtoken";
 import * as dotenv from "dotenv";
+import { activeQueueWhere, reconcileChargingState } from "./station-state";
 
 dotenv.config();
 const SECRET = process.env.SECRET;
@@ -61,7 +62,7 @@ getStationsRouter.get("/stations", async (req, res: Response) => {
                     take: 1
                 },
                 queue: {
-                    where: { status: { in: ["WAITING", "NOTIFIED"] } },
+                    where: activeQueueWhere,
                     select: {
                         id: true,
                         userId: true,
@@ -75,45 +76,49 @@ getStationsRouter.get("/stations", async (req, res: Response) => {
         })
 
         const now = new Date();
+        let needsReconcile = false;
 
         const formattedStations = stations.map(station => {
-            const activeSession = station.session[0] || null;
+            const rawSession = station.session[0] ?? null;
+
+            // Virtual expiry: treat expired sessions as free without a DB write
+            const sessionExpired = rawSession?.estimatedDuration != null &&
+                Math.floor((now.getTime() - new Date(rawSession.createdAt).getTime()) / 60000) >= rawSession.estimatedDuration;
+            if (sessionExpired) needsReconcile = true;
+            const effectiveSession = sessionExpired ? null : rawSession;
+
+            const isOccupied = Boolean(effectiveSession);
             let activeSessionInfo = null;
 
-            if (activeSession && station.isOccupied) {
-                const startTime = new Date(activeSession.createdAt);
+            if (effectiveSession) {
+                const startTime = new Date(effectiveSession.createdAt);
                 const elapsedMs = now.getTime() - startTime.getTime();
                 const elapsedMinutes = Math.floor(elapsedMs / 60000);
-
                 let minutesRemaining: number | null = null;
                 let estimatedFreeAt: string | null = null;
-
-                if (activeSession.estimatedDuration) {
-                    minutesRemaining = Math.max(0, activeSession.estimatedDuration - elapsedMinutes);
-                    const freeAt = new Date(startTime.getTime() + activeSession.estimatedDuration * 60000);
-                    estimatedFreeAt = freeAt.toISOString();
+                if (effectiveSession.estimatedDuration) {
+                    minutesRemaining = Math.max(0, effectiveSession.estimatedDuration - elapsedMinutes);
+                    estimatedFreeAt = new Date(startTime.getTime() + effectiveSession.estimatedDuration * 60000).toISOString();
                 }
-
                 activeSessionInfo = {
-                    startTime: activeSession.createdAt,
-                    estimatedDuration: activeSession.estimatedDuration,
+                    startTime: effectiveSession.createdAt,
+                    estimatedDuration: effectiveSession.estimatedDuration,
                     elapsedMinutes,
                     minutesRemaining,
                     estimatedFreeAt
                 };
             }
 
-            // Queue info
             const waitingQueue = station.queue.filter(q => q.status === "WAITING" || q.status === "NOTIFIED");
-            const userQueueEntry = currentUserId 
-                ? waitingQueue.find(q => q.userId === currentUserId) 
+            const userQueueEntry = currentUserId
+                ? waitingQueue.find(q => q.userId === currentUserId)
                 : null;
 
             return {
                 id: station.id,
                 location: station.location,
                 healthPercentage: station.healthPercentage,
-                isOccupied: station.isOccupied,
+                isOccupied,
                 isActive: station.isActive,
                 isFaulty: station.isFaulty,
                 latitude: station.latitude,
@@ -123,11 +128,11 @@ getStationsRouter.get("/stations", async (req, res: Response) => {
                 oem: `${station.OEM.firstName} ${station.OEM.lastName}`,
                 reseller: `${station.reseller.firstName} ${station.reseller.lastName}`,
                 operator: `${station.operator.firstName} ${station.operator.lastName}`,
-                connectedUser: station.connectedUser 
-                    ? `${station.connectedUser.firstName} ${station.connectedUser.lastName}` 
+                connectedUser: station.connectedUser
+                    ? `${station.connectedUser.firstName} ${station.connectedUser.lastName}`
                     : null,
                 activeSession: activeSessionInfo,
-                isCurrentUserCharging: currentUserId !== null && station.isOccupied && activeSession?.userId === currentUserId,
+                isCurrentUserCharging: currentUserId !== null && isOccupied && effectiveSession?.userId === currentUserId,
                 queue: {
                     count: waitingQueue.length,
                     userPosition: userQueueEntry?.position || null,
@@ -135,6 +140,11 @@ getStationsRouter.get("/stations", async (req, res: Response) => {
                 }
             };
         })
+
+        // Sync stale DB state in background without blocking the response
+        if (needsReconcile) {
+            reconcileChargingState(prisma).catch(e => console.error("reconcile error:", e));
+        }
 
         return res.json({
             msg: "Stations retrieved successfully",
