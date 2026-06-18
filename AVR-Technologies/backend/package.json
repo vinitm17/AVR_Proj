@@ -17,23 +17,22 @@
   "description": "",
   "dependencies": {
     "@prisma/client": "^6.14.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "http": "^0.0.1-security",
-    "jsonwebtoken": "^9.0.2",
-    "ws": "^8.18.2",
-    "zod": "^4.0.2"
-  },
-  "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.3.0",
     "@types/ws": "^8.18.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "http": "^0.0.1-security",
+    "jsonwebtoken": "^9.0.2",
     "prisma": "^6.14.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.2"
-  }
+    "typescript": "^5.9.2",
+    "ws": "^8.18.2",
+    "zod": "^4.0.2"
+  },
+  "devDependencies": {}
 }
