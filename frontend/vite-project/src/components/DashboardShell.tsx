@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { BatteryCharging, Clock, History, LogOut, MapPin, PanelLeftIcon, User, Wallet } from "lucide-react";
+import { BatteryCharging, Clock, History, LogOut, MapPin, Menu, PanelLeftIcon, User, Wallet, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -50,6 +50,7 @@ export function DashboardShell() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [sidebarPinned, setSidebarPinned] = useState(false);
   const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = sidebarPinned || sidebarHovered;
@@ -78,9 +79,54 @@ export function DashboardShell() {
 
   return (
     <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarPinned}>
+      {/* Mobile full-screen nav overlay */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#EBF4DD] lg:hidden">
+          <div className="flex items-center justify-between border-b border-[#90AB8B]/40 px-4 py-4">
+            <div className="flex items-center gap-2.5">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-[#3B4953] text-[#EBF4DD]">
+                <BatteryCharging className="size-4" />
+              </div>
+              <span className="font-semibold text-[#3B4953]">ONE EV</span>
+            </div>
+            <button onClick={() => setMobileNavOpen(false)} className="rounded-xl p-2 text-[#3B4953] hover:bg-[#90AB8B]/25" aria-label="Close menu">
+              <X className="size-5" />
+            </button>
+          </div>
+          <nav className="flex-1 space-y-1 p-4">
+            {navItems.map(item => (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={() => setMobileNavOpen(false)}
+                className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${location.pathname === item.href ? "bg-[#3B4953] text-[#EBF4DD]" : "text-[#3B4953] hover:bg-[#90AB8B]/25"}`}
+              >
+                <item.icon className="size-5" />{item.label}
+              </Link>
+            ))}
+            <Link
+              to="/profile"
+              onClick={() => setMobileNavOpen(false)}
+              className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-colors ${location.pathname === "/profile" ? "bg-[#3B4953] text-[#EBF4DD]" : "text-[#3B4953] hover:bg-[#90AB8B]/25"}`}
+            >
+              <User className="size-5" />Profile
+            </Link>
+          </nav>
+          <div className="border-t border-[#90AB8B]/40 p-4 space-y-1">
+            <div className="px-4 py-2">
+              <p className="text-sm font-medium text-[#3B4953]">{dashboardData?.userName ?? "Account"}</p>
+              <p className="text-xs text-[#5A7863]">{dashboardData?.email ?? "Signed in"}</p>
+            </div>
+            <button onClick={() => { setMobileNavOpen(false); handleLogout(); }} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-[#3B4953] hover:bg-[#90AB8B]/25 transition-colors">
+              <LogOut className="size-5" />Logout
+            </button>
+          </div>
+        </div>
+      )}
+
       <Sidebar
         collapsible="icon"
-        className="border-r border-[#90AB8B]/40"
+        className="hidden lg:flex border-r border-[#90AB8B]/40"
         onMouseEnter={() => setSidebarHovered(true)}
         onMouseLeave={() => setSidebarHovered(false)}
       >
@@ -161,6 +207,16 @@ export function DashboardShell() {
       </Sidebar>
 
       <SidebarInset className="min-h-svh bg-[#EBF4DD]">
+        {/* Mobile top bar */}
+        <div className="flex items-center gap-3 border-b border-[#90AB8B]/40 bg-[#F4F8ED] px-4 py-3 lg:hidden">
+          <button onClick={() => setMobileNavOpen(true)} className="rounded-xl p-1.5 text-[#3B4953] hover:bg-[#90AB8B]/25" aria-label="Open menu">
+            <Menu className="size-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <BatteryCharging className="size-4 text-[#3B4953]" />
+            <span className="text-sm font-semibold text-[#3B4953]">ONE EV</span>
+          </div>
+        </div>
         <div className="p-4 md:p-6">
           <div className="mb-4 rounded-2xl border border-[#90AB8B]/45 bg-[#F4F8ED]/75 px-4 py-3">
             <div>

@@ -11,6 +11,7 @@ import api from "../lib/api";
 
 const RAZORPAY_KEY = import.meta.env.VITE_RAZORPAY_KEY_ID as string;
 const RAZORPAY_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
+const MINS_PER_POINT = parseInt(import.meta.env.VITE_MINS_PER_POINT || "5", 10);
 
 interface DashboardData {
   userName: string;
@@ -140,7 +141,7 @@ export default function Home() {
   }
 
   const availablePoints = Number(dashboardData?.totalPoints ?? 0);
-  const estimatedMinutes = availablePoints * 5;
+  const estimatedMinutes = availablePoints * MINS_PER_POINT;
   const hasChargingHistory = Boolean(dashboardData?.totalSessions);
   const hasUsedStations = Boolean(dashboardData?.stationsUsed);
 
@@ -177,27 +178,27 @@ export default function Home() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-3 gap-2 md:gap-4">
         <Card className="bg-[#F4F8ED]/90">
-          <CardHeader className="pb-2">
-            <CardDescription>Available points</CardDescription>
-            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.totalPoints ?? "0"}</CardTitle>
+          <CardHeader className="p-3 pb-1 md:p-6 md:pb-2">
+            <CardDescription className="text-[10px] md:text-sm">Available points</CardDescription>
+            <CardTitle className="text-xl md:text-3xl text-[#3B4953]">{dashboardData?.totalPoints ?? "0"}</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">Use points to reserve charging time.</CardContent>
+          <CardContent className="hidden md:block px-6 pb-6 text-sm text-muted-foreground">Use points to reserve charging time.</CardContent>
         </Card>
         <Card className="bg-[#F4F8ED]/90">
-          <CardHeader className="pb-2">
-            <CardDescription>Total sessions</CardDescription>
-            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.totalSessions ?? 0}</CardTitle>
+          <CardHeader className="p-3 pb-1 md:p-6 md:pb-2">
+            <CardDescription className="text-[10px] md:text-sm">Total sessions</CardDescription>
+            <CardTitle className="text-xl md:text-3xl text-[#3B4953]">{dashboardData?.totalSessions ?? 0}</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">Completed and active charging records.</CardContent>
+          <CardContent className="hidden md:block px-6 pb-6 text-sm text-muted-foreground">Completed and active charging records.</CardContent>
         </Card>
         <Card className="bg-[#F4F8ED]/90">
-          <CardHeader className="pb-2">
-            <CardDescription>Stations used</CardDescription>
-            <CardTitle className="text-3xl text-[#3B4953]">{dashboardData?.stationsUsed ?? 0}</CardTitle>
+          <CardHeader className="p-3 pb-1 md:p-6 md:pb-2">
+            <CardDescription className="text-[10px] md:text-sm">Stations used</CardDescription>
+            <CardTitle className="text-xl md:text-3xl text-[#3B4953]">{dashboardData?.stationsUsed ?? 0}</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">Unique stations connected to your account.</CardContent>
+          <CardContent className="hidden md:block px-6 pb-6 text-sm text-muted-foreground">Unique stations connected to your account.</CardContent>
         </Card>
       </div>
 
@@ -328,7 +329,7 @@ export default function Home() {
                 </div>
                 <div className="flex justify-between text-[#3B4953]">
                   <span>Charging time</span>
-                  <span className="font-semibold">~{effectivePoints * 5} min</span>
+                  <span className="font-semibold">~{effectivePoints * MINS_PER_POINT} min</span>
                 </div>
                 <div className="flex justify-between text-[#3B4953] pt-1 border-t border-[#90AB8B]/40">
                   <span className="font-semibold">Total</span>

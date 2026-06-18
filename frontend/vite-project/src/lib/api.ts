@@ -8,16 +8,23 @@ const apiInstance = axios.create({
   timeout: 10000, // 10 second timeout
 });
 
-// Add authorization token to requests
 apiInstance.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
   },
+  (error) => Promise.reject(error)
+);
+
+// On 401 — token invalid or expired — clear and redirect to signin
+apiInstance.interceptors.response.use(
+  (response) => response,
   (error) => {
+    if (error?.response?.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/signin';
+    }
     return Promise.reject(error);
   }
 );

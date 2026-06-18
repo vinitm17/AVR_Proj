@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -16,7 +49,12 @@ exports.postUserRouter = void 0;
 const express_1 = __importDefault(require("express"));
 const auth_middleware_1 = require("../../middleware/auth.middleware");
 const client_1 = require("@prisma/client");
+const dotenv = __importStar(require("dotenv"));
 const station_state_1 = require("./station-state");
+const post_hw_1 = require("../../hardware/actions/post.hw");
+dotenv.config();
+const MINS_PER_POINT = parseInt(process.env.MINS_PER_POINT || "5", 10);
+const MAX_SESSION_MINUTES = 480;
 exports.postUserRouter = (0, express_1.default)();
 const prisma = new client_1.PrismaClient();
 exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -94,13 +132,12 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 msg: "User not authenticated"
             });
         }
-        yield (0, station_state_1.reconcileChargingState)(prisma);
-        const user = yield prisma.user.findUnique({
-            where: { id: userId }
-        });
-        const station = yield prisma.chargingStation.findUnique({
-            where: { id: CID }
-        });
+        // Per-station reconcile only — reconciling all stations is O(N) and causes Axios timeouts
+        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
+        const [user, station] = yield Promise.all([
+            prisma.user.findUnique({ where: { id: userId } }),
+            prisma.chargingStation.findUnique({ where: { id: CID } })
+        ]);
         if (!user || !station) {
             return res.status(404).json({
                 msg: "User or station not found"
@@ -156,45 +193,42 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 });
             }
         }
-        // Get the points to reserve (either custom or all available)
-        const pointsToReserve = customPoints || user.points;
-        const estimatedDuration = customPoints ? Number(customPoints) * 5 : null; // 5 min per point
-        // Prevent unrealistic session durations (max 8 hours = 480 minutes)
-        if (estimatedDuration && estimatedDuration > 480) {
+        const estimatedDuration = customPoints ? Number(customPoints) * MINS_PER_POINT : null;
+        if (estimatedDuration && estimatedDuration > MAX_SESSION_MINUTES) {
             return res.status(400).json({
-                msg: "Session duration cannot exceed 8 hours (480 minutes). Please use fewer points.",
-                maxAllowedPoints: 96
+                msg: `Session duration cannot exceed ${MAX_SESSION_MINUTES} minutes. Please use fewer points.`,
+                maxAllowedPoints: Math.floor(MAX_SESSION_MINUTES / MINS_PER_POINT)
             });
         }
-        const [updatedStation, newSession, updatedUser] = yield prisma.$transaction([
-            prisma.chargingStation.update({
-                where: { id: CID },
-                data: {
-                    isOccupied: true,
-                    connectedUserID: userId
-                }
-            }),
-            prisma.sessions.create({
+        // Atomic claim + session create in one transaction — prevents two users
+        // from grabbing the same station if they both click at the same moment
+        const { newSession } = yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+            const claimed = yield tx.chargingStation.updateMany({
+                where: { id: CID, isOccupied: false, isActive: true, isFaulty: false },
+                data: { isOccupied: true, connectedUserID: userId }
+            });
+            if (claimed.count === 0) {
+                throw Object.assign(new Error("Station was just taken by another user"), { code: "STATION_TAKEN" });
+            }
+            const newSession = yield tx.sessions.create({
                 data: {
                     userId: userId,
                     stationId: CID,
-                    totalTime: "0", // Will be updated when session ends
+                    totalTime: "0",
                     isActive: true,
                     location: station.location,
                     pointsUsed: customPoints ? customPoints : BigInt(0),
                     estimatedDuration: estimatedDuration
                 }
-            }),
-            // If customPoints is provided, deduct them immediately
-            ...(customPoints ? [
-                prisma.user.update({
+            });
+            if (customPoints) {
+                yield tx.user.update({
                     where: { id: userId },
-                    data: {
-                        points: user.points - customPoints
-                    }
-                })
-            ] : [])
-        ]);
+                    data: { points: user.points - customPoints }
+                });
+            }
+            return { newSession };
+        }));
         // Remove user from queue if they were in it
         yield prisma.stationQueue.deleteMany({
             where: {
@@ -223,8 +257,12 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 pointsAllocated: customPoints ? customPoints.toString() : null
             }
         });
+        (0, post_hw_1.notifyHardware)('start', CID).catch(() => { });
     }
     catch (e) {
+        if ((e === null || e === void 0 ? void 0 : e.code) === "STATION_TAKEN") {
+            return res.status(400).json({ msg: "Station was just taken by another user. Please try again." });
+        }
         console.error("error starting charging session: " + e);
         res.status(500).json({
             msg: "Failed to start charging session"
@@ -326,6 +364,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
                     status: "NOTIFIED"
                 }
             });
+            (0, post_hw_1.notifyHardware)('stop', CID).catch(() => { });
             res.json({
                 msg: "Charging session stopped successfully",
                 sessionId: session.id,
@@ -339,7 +378,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
             return res.status(400).json({ msg: "User not found or has no points" });
         }
         // Calculate coins to be deducted (minimum 1 coin for any charging session)
-        const coinsUsed = BigInt(Math.max(1, Math.ceil(totalMinutes / 5)));
+        const coinsUsed = BigInt(Math.max(1, Math.ceil(totalMinutes / MINS_PER_POINT)));
         // Check if user has sufficient points, if not, use all remaining points
         const actualCoinsUsed = user.points >= coinsUsed ? coinsUsed : user.points;
         yield prisma.$transaction([
@@ -376,6 +415,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
                 status: "NOTIFIED"
             }
         });
+        (0, post_hw_1.notifyHardware)('stop', CID).catch(() => { });
         res.json({
             msg: "Charging session stopped successfully",
             sessionId: session.id,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { MapPin, Zap, AlertTriangle, CheckCircle, XCircle, Battery, Clock, Search, Filter, Users, Timer, Bell, Navigation, LocateFixed } from "lucide-react";
+import { ArrowLeft, MapPin, Zap, AlertTriangle, CheckCircle, XCircle, Battery, Clock, Search, Filter, Users, Timer, Bell, Navigation, LocateFixed } from "lucide-react";
 import api from "../lib/api";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -70,6 +70,7 @@ interface StationDetailModalProps {
   loading: boolean;
   queueLoading: boolean;
   onRefreshStations: () => Promise<void>;
+  onSessionComplete: (stationId: number) => void;
 }
 
 interface UserData {
@@ -93,6 +94,7 @@ type StationWithDistance = Station & {
   nearbyScore: number;
 };
 
+const MINS_PER_POINT = parseInt(import.meta.env.VITE_MINS_PER_POINT || "5", 10);
 const AVERAGE_CITY_SPEED_KMPH = 20;
 const SOON_FREE_MINUTES = 15;
 const TARGET_LOCATION_ACCURACY_METERS = 75;
@@ -373,6 +375,8 @@ export default function StationsPage() {
       console.error("Error starting charging:", err);
       const errorMessage = (err as ApiError)?.response?.data?.msg || "Failed to start charging. Please try again.";
       toast.error(errorMessage);
+      // Sync state even on error — session may have been created before the error
+      fetchStations(true);
       throw err;
     } finally {
       setActionLoading(null);
@@ -409,6 +413,10 @@ export default function StationsPage() {
       setActionLoading(null);
     }
   };
+
+  const handleSessionComplete = useCallback((stationId: number) => {
+    setChargingStations(prev => { const s = new Set(prev); s.delete(stationId); return s; });
+  }, []);
 
   const handleJoinQueue = async (stationId: number) => {
     try {
@@ -883,87 +891,29 @@ export default function StationsPage() {
           </div>
         )}
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#5A7863] text-sm mb-1">Available</p>
-                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
-                    {stations.filter(s => s.isActive && !s.isOccupied && !s.isFaulty).length}
-                  </p>
+        {/* Summary Stats — single row always, compact on mobile */}
+        <div className="grid grid-cols-5 gap-2 md:gap-4 mb-6">
+          {[
+            { label: "Available", value: stations.filter(s => s.isActive && !s.isOccupied && !s.isFaulty).length, icon: <CheckCircle className="w-5 h-5" /> },
+            { label: "Occupied",  value: stations.filter(s => s.isOccupied).length,                               icon: <Clock className="w-5 h-5" /> },
+            { label: "Queued",    value: stations.filter(s => s.queue && s.queue.count > 0).length,               icon: <Users className="w-5 h-5" /> },
+            { label: "Faulty",    value: stations.filter(s => s.isFaulty).length,                                 icon: <XCircle className="w-5 h-5" /> },
+            { label: "Inactive",  value: stations.filter(s => !s.isActive).length,                                icon: <XCircle className="w-5 h-5" /> },
+          ].map(({ label, value, icon }) => (
+            <Card key={label} className="border-[#90AB8B]/45 bg-[#F4F8ED]">
+              <CardContent className="p-2 md:p-4">
+                <div className="flex flex-col items-center gap-0.5 md:flex-row md:items-start md:justify-between">
+                  <div className="text-center md:text-left">
+                    <p className="text-[#5A7863] text-[10px] leading-tight md:text-sm md:mb-1">{label}</p>
+                    <p className="text-xl font-semibold tracking-[-0.04em] text-[#26343A] md:text-3xl">{value}</p>
+                  </div>
+                  <div className="hidden md:flex w-10 h-10 bg-[#90AB8B]/25 rounded-xl items-center justify-center text-[#26343A]">
+                    {icon}
+                  </div>
                 </div>
-                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
-                  <CheckCircle className="w-5 h-5" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#5A7863] text-sm mb-1">Occupied</p>
-                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
-                    {stations.filter(s => s.isOccupied).length}
-                  </p>
-                </div>
-                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
-                  <Clock className="w-5 h-5" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#5A7863] text-sm mb-1">Queued</p>
-                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
-                    {stations.filter(s => s.queue && s.queue.count > 0).length}
-                  </p>
-                </div>
-                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
-                  <Users className="w-5 h-5" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#5A7863] text-sm mb-1">Faulty</p>
-                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
-                    {stations.filter(s => s.isFaulty).length}
-                  </p>
-                </div>
-                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
-                  <XCircle className="w-5 h-5" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-[#90AB8B]/45 bg-[#F4F8ED]">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[#5A7863] text-sm mb-1">Inactive</p>
-                  <p className="text-3xl font-semibold tracking-[-0.04em] text-[#26343A]">
-                    {stations.filter(s => !s.isActive).length}
-                  </p>
-                </div>
-                <div className="w-10 h-10 bg-[#90AB8B]/25 rounded-xl flex items-center justify-center text-[#26343A]">
-                  <XCircle className="w-5 h-5" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
         {/* Stations List */}
@@ -1164,6 +1114,7 @@ export default function StationsPage() {
         loading={selectedStation ? actionLoading === selectedStation.id : false}
         queueLoading={queueLoading}
         onRefreshStations={() => fetchStations(true)}
+        onSessionComplete={handleSessionComplete}
       />
     </div>
   );
@@ -1184,7 +1135,8 @@ function StationDetailModal({
   hasActiveSessionElsewhere,
   loading,
   queueLoading,
-  onRefreshStations
+  onRefreshStations,
+  onSessionComplete
 }: StationDetailModalProps) {
   const userPoints = userData?.points ? parseInt(userData.points) : 0;
   const [localUserPoints, setLocalUserPoints] = useState(userPoints);
@@ -1256,7 +1208,7 @@ function StationDetailModal({
   useEffect(() => {
     if (!localSessionActive || localRemainingSeconds === null) return;
     const elapsedSeconds = localTotalSeconds - localRemainingSeconds;
-    const spentPoints = Math.min(pointsToUse, Math.floor(elapsedSeconds / (5 * 60)));
+    const spentPoints = Math.min(pointsToUse, Math.floor(elapsedSeconds / (MINS_PER_POINT * 60)));
 
     if (spentPoints !== localSpentPoints) {
       const updatedPoints = Math.max(0, localSessionStartPoints - spentPoints);
@@ -1294,6 +1246,7 @@ function StationDetailModal({
       toast.success("Charging session completed", {
         description: "Saved to history",
       });
+      onSessionComplete(station!.id);
       onRefreshStations();
     }
   }, [localRemainingSeconds, localSessionActive, localSessionStartPoints, localSpentPoints, localTotalSeconds, pointsToUse, station]);
@@ -1335,7 +1288,7 @@ function StationDetailModal({
     try {
       await onStartCharging(station.id, pointsToUse);
 
-      const totalSeconds = pointsToUse * 5 * 60;
+      const totalSeconds = pointsToUse * MINS_PER_POINT * 60;
       setLocalTotalSeconds(totalSeconds);
       setLocalRemainingSeconds(totalSeconds);
       setLocalSessionStartPoints(localUserPoints);
@@ -1361,12 +1314,19 @@ function StationDetailModal({
   return (
     <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()} direction="right">
       <DrawerContent className="h-full !w-[min(1180px,calc(100vw-1rem))] overflow-hidden border-l border-border bg-background sm:!max-w-none">
-        <DrawerHeader className="border-b border-border px-6 py-5 text-left">
-          <DrawerTitle className="text-xl text-[#3B4953]">Station #{station.id} details</DrawerTitle>
-          <DrawerDescription>{station.location}</DrawerDescription>
+        <DrawerHeader className="border-b border-border px-4 py-3 lg:px-6 lg:py-5 text-left">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="lg:hidden shrink-0 rounded-xl p-1.5 text-[#3B4953] hover:bg-[#90AB8B]/25" aria-label="Back">
+              <ArrowLeft className="size-5" />
+            </button>
+            <div>
+              <DrawerTitle className="text-lg lg:text-xl text-[#3B4953]">Station #{station.id} details</DrawerTitle>
+              <DrawerDescription>{station.location}</DrawerDescription>
+            </div>
+          </div>
         </DrawerHeader>
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(360px,0.9fr)_minmax(460px,1.1fr)]">
-        <div className="space-y-6 overflow-y-auto px-6 py-5">
+        <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(360px,0.9fr)_minmax(460px,1.1fr)]">
+        <div className="order-2 lg:order-1 space-y-4 lg:space-y-6 overflow-y-auto px-4 py-4 lg:px-6 lg:py-5">
         {/* Station Info */}
         <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
           <h3 className="font-semibold text-lg text-blue-800 mb-3 flex items-center">
@@ -1625,7 +1585,7 @@ function StationDetailModal({
                   <span className="ml-2 text-[#3B4953] font-medium">points</span>
                 </div>
                 <p className="text-sm text-[#3B4953] mt-2 bg-yellow-100 p-2 rounded">
-                  This will allow approximately {pointsToUse * 5} minutes of charging time.
+                  This will allow approximately {pointsToUse * MINS_PER_POINT} minutes of charging time.
                 </p>
               </div>
 
@@ -1728,14 +1688,14 @@ function StationDetailModal({
           </Button>
         </div>
         </div>
-        <div className="min-h-[320px] border-t border-[#90AB8B]/40 bg-[#DDE9D0] p-3 lg:min-h-0 lg:border-l lg:border-t-0">
+        <div className="order-1 lg:order-2 min-h-[220px] border-b border-[#90AB8B]/40 bg-[#DDE9D0] p-3 lg:min-h-0 lg:border-b-0 lg:border-l lg:border-t-0">
           {mapSrc ? (
             <div className="h-full overflow-hidden rounded-2xl border border-[#90AB8B]/50 bg-[#EBF4DD]">
               <iframe
                 src={mapSrc}
                 width="100%"
                 height="100%"
-                className="h-full min-h-[320px] w-full lg:min-h-0"
+                className="h-full min-h-[220px] w-full lg:min-h-0"
                 style={{ border: 0 }}
                 allowFullScreen
                 loading="lazy"
@@ -1744,7 +1704,7 @@ function StationDetailModal({
               />
             </div>
           ) : (
-            <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-[#90AB8B]/60 bg-[#EBF4DD] p-6 text-center">
+            <div className="flex h-full min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-[#90AB8B]/60 bg-[#EBF4DD] p-6 text-center">
               <div>
                 <MapPin className="mx-auto mb-3 size-8 text-[#5A7863]" />
                 <p className="text-sm font-semibold text-[#3B4953]">Map unavailable</p>

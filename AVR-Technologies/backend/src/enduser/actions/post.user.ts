@@ -2,8 +2,14 @@ import Router from "express"
 import { verifyJWT } from "../../middleware/auth.middleware"
 import { PrismaClient } from "@prisma/client"
 import { Request, Response } from "express"
+import * as dotenv from "dotenv"
 import { userReq } from "../../middleware/auth.middleware"
 import { activeQueueWhere, reconcileChargingState } from "./station-state"
+import { notifyHardware } from "../../hardware/actions/post.hw"
+
+dotenv.config()
+const MINS_PER_POINT = parseInt(process.env.MINS_PER_POINT || "5", 10)
+const MAX_SESSION_MINUTES = 480
 
 export const postUserRouter = Router()
 const prisma = new PrismaClient()
@@ -93,15 +99,13 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             })
         }
 
-        await reconcileChargingState(prisma)
+        // Per-station reconcile only — reconciling all stations is O(N) and causes Axios timeouts
+        await reconcileChargingState(prisma, CID)
 
-        const user = await prisma.user.findUnique({
-            where: { id: userId }
-        })
-
-        const station = await prisma.chargingStation.findUnique({
-            where: { id: CID }
-        })
+        const [user, station] = await Promise.all([
+            prisma.user.findUnique({ where: { id: userId } }),
+            prisma.chargingStation.findUnique({ where: { id: CID } })
+        ])
 
         if (!user || !station) {
             return res.status(404).json({
@@ -169,47 +173,44 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             }
         }
 
-        // Get the points to reserve (either custom or all available)
-        const pointsToReserve = customPoints || user.points
-        const estimatedDuration = customPoints ? Number(customPoints) * 5 : null  // 5 min per point
+        const estimatedDuration = customPoints ? Number(customPoints) * MINS_PER_POINT : null
 
-        // Prevent unrealistic session durations (max 8 hours = 480 minutes)
-        if (estimatedDuration && estimatedDuration > 480) {
+        if (estimatedDuration && estimatedDuration > MAX_SESSION_MINUTES) {
             return res.status(400).json({
-                msg: "Session duration cannot exceed 8 hours (480 minutes). Please use fewer points.",
-                maxAllowedPoints: 96
+                msg: `Session duration cannot exceed ${MAX_SESSION_MINUTES} minutes. Please use fewer points.`,
+                maxAllowedPoints: Math.floor(MAX_SESSION_MINUTES / MINS_PER_POINT)
             })
         }
 
-        const [updatedStation, newSession, updatedUser] = await prisma.$transaction([
-            prisma.chargingStation.update({
-                where: { id: CID },
-                data: {
-                    isOccupied: true,
-                    connectedUserID: userId
-                }
-            }),
-            prisma.sessions.create({
+        // Atomic claim + session create in one transaction — prevents two users
+        // from grabbing the same station if they both click at the same moment
+        const { newSession } = await prisma.$transaction(async (tx) => {
+            const claimed = await tx.chargingStation.updateMany({
+                where: { id: CID, isOccupied: false, isActive: true, isFaulty: false },
+                data: { isOccupied: true, connectedUserID: userId }
+            })
+            if (claimed.count === 0) {
+                throw Object.assign(new Error("Station was just taken by another user"), { code: "STATION_TAKEN" })
+            }
+            const newSession = await tx.sessions.create({
                 data: {
                     userId: userId,
                     stationId: CID,
-                    totalTime: "0", // Will be updated when session ends
+                    totalTime: "0",
                     isActive: true,
                     location: station.location,
                     pointsUsed: customPoints ? customPoints : BigInt(0),
                     estimatedDuration: estimatedDuration
                 }
-            }),
-            // If customPoints is provided, deduct them immediately
-            ...(customPoints ? [
-                prisma.user.update({
+            })
+            if (customPoints) {
+                await tx.user.update({
                     where: { id: userId },
-                    data: {
-                        points: user.points - customPoints
-                    }
+                    data: { points: user.points! - customPoints }
                 })
-            ] : [])
-        ])
+            }
+            return { newSession }
+        })
 
         // Remove user from queue if they were in it
         await prisma.stationQueue.deleteMany({
@@ -242,7 +243,12 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             }
         })
 
-    } catch (e) {
+        notifyHardware('start', CID).catch(() => {})
+
+    } catch (e: any) {
+        if (e?.code === "STATION_TAKEN") {
+            return res.status(400).json({ msg: "Station was just taken by another user. Please try again." })
+        }
         console.error("error starting charging session: " + e)
         res.status(500).json({
             msg: "Failed to start charging session"
@@ -360,6 +366,7 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
                 }
             });
 
+            notifyHardware('stop', CID).catch(() => {})
             res.json({
                 msg: "Charging session stopped successfully",
                 sessionId: session.id,
@@ -375,7 +382,7 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
         }
 
         // Calculate coins to be deducted (minimum 1 coin for any charging session)
-        const coinsUsed = BigInt(Math.max(1, Math.ceil(totalMinutes / 5)))
+        const coinsUsed = BigInt(Math.max(1, Math.ceil(totalMinutes / MINS_PER_POINT)))
         
         // Check if user has sufficient points, if not, use all remaining points
         const actualCoinsUsed = user.points >= coinsUsed ? coinsUsed : user.points
@@ -416,6 +423,7 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
             }
         })
 
+        notifyHardware('stop', CID).catch(() => {})
         res.json({
             msg: "Charging session stopped successfully",
             sessionId: session.id,
