@@ -41,12 +41,22 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.postHwRouter = void 0;
 exports.notifyHardware = notifyHardware;
 const express_1 = require("express");
 const client_1 = require("@prisma/client");
-const auth_middleware_1 = require("../../middleware/auth.middleware");
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
 // Called from startCharging / stopCharging — fire and forget, never blocks the main flow
@@ -78,36 +88,109 @@ function notifyHardware(action, stationId) {
         }
     });
 }
+const latestHwReadings = new Map();
+// Optional simple API-key guard (set HW_API_KEY in .env; leave blank to skip)
+function checkHwApiKey(req, res) {
+    const expected = process.env.HW_API_KEY;
+    if (!expected)
+        return true; // no key configured → open
+    const provided = req.headers['x-hw-api-key'] || req.query.apiKey;
+    if (provided !== expected) {
+        res.status(401).json({ msg: "Invalid hardware API key" });
+        return false;
+    }
+    return true;
+}
 exports.postHwRouter = (0, express_1.Router)();
 const prisma = new client_1.PrismaClient();
-exports.postHwRouter.post("/register", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+// ---------------------------------------------------------------------------
+// INBOUND — hardware calls us
+// ---------------------------------------------------------------------------
+/**
+ * POST /hw/data
+ *
+ * Hardware hits this endpoint to exchange data:
+ *   — they SEND us their current sensor readings (p1-p12 + anything else)
+ *   — we RESPOND with our p1-p12 values + the action currently running
+ *
+ * Body they send:
+ *   { stationId: number, p1: number, ..., p12: number, ...anyOtherFields }
+ *
+ * We store their payload in-memory (use DB once schema is decided).
+ */
+exports.postHwRouter.post("/data", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!checkHwApiKey(req, res))
+        return;
     try {
-        const userId = req.id;
-        if (!userId) {
-            return res.json(401).json({
-                msg: "user not authenticated"
-            });
+        const _a = req.body, { stationId, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0, p9 = 0, p10 = 0, p11 = 0, p12 = 0 } = _a, extra = __rest(_a, ["stationId", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12"]);
+        if (!stationId) {
+            return res.status(400).json({ msg: "stationId is required" });
         }
-        const user = yield prisma.user.findUnique({
-            where: {
-                id: userId
-            }
+        // Determine current action from active session
+        const activeSession = yield prisma.sessions.findFirst({
+            where: { stationId: Number(stationId), isActive: true },
+            orderBy: { createdAt: 'desc' }
         });
-        if (!user) {
-            return res.json(401).json({
-                msg: "user not authenticated"
-            });
-        }
-        if (user.role == "Operator" || user.role == "EndUser") {
-            return res.json(401).json({
-                msg: "you are not allowed"
-            });
-        }
-        //assuming they have hardware IDs for every hardware
-        const { hwId } = req.body;
+        const action = activeSession ? 'start' : 'idle';
+        // Store what hardware sent us
+        const reading = {
+            stationId: Number(stationId), action,
+            p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12,
+            receivedAt: new Date().toISOString(),
+            extra
+        };
+        latestHwReadings.set(Number(stationId), reading);
+        console.log(`[HW inbound] station ${stationId}:`, reading);
+        // Respond with our current p1-p12 state + action
+        return res.json({ p1: 0, p2: 0, p3: 0, p4: 0, p5: 0, p6: 0,
+            p7: 0, p8: 0, p9: 0, p10: 0, p11: 0, p12: 0, action });
     }
     catch (e) {
-        console.error("error found - " + e);
+        console.error("[HW data error]", e);
+        res.status(500).json({ msg: "Internal server error" });
     }
 }));
-//write here the post api of 12 points p1, p2, etc
+/**
+ * GET /hw/data?stationId=X
+ *
+ * Alternative: hardware polls us to READ our current state.
+ * No request body needed — they just call this URL.
+ * Returns our p1-p12 + the current action for that station.
+ */
+exports.postHwRouter.get("/data", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    if (!checkHwApiKey(req, res))
+        return;
+    try {
+        const stationId = req.query.stationId ? Number(req.query.stationId) : null;
+        if (!stationId) {
+            // No stationId → return latest reading for all stations
+            const all = Object.fromEntries(latestHwReadings);
+            return res.json({ readings: all });
+        }
+        const activeSession = yield prisma.sessions.findFirst({
+            where: { stationId, isActive: true },
+            orderBy: { createdAt: 'desc' }
+        });
+        const action = activeSession ? 'start' : 'idle';
+        return res.json({ p1: 0, p2: 0, p3: 0, p4: 0, p5: 0, p6: 0,
+            p7: 0, p8: 0, p9: 0, p10: 0, p11: 0, p12: 0,
+            action, stationId,
+            lastHwReading: (_a = latestHwReadings.get(stationId)) !== null && _a !== void 0 ? _a : null });
+    }
+    catch (e) {
+        console.error("[HW get error]", e);
+        res.status(500).json({ msg: "Internal server error" });
+    }
+}));
+/**
+ * GET /hw/readings
+ * Dashboard view of all stored hardware readings (for debugging / admin).
+ */
+exports.postHwRouter.get("/readings", (req, res) => {
+    if (!checkHwApiKey(req, res))
+        return;
+    const all = {};
+    latestHwReadings.forEach((v, k) => { all[k] = v; });
+    res.json({ count: latestHwReadings.size, readings: all });
+});
