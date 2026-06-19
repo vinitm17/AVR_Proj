@@ -1062,8 +1062,9 @@ export default function StationsPage() {
 
                 {/* View Details Button - Replaces direct action buttons */}
                 <div className="mt-4 pt-4 border-t border-[#90AB8B]/25">
-                  <Button 
+                  <Button
                     className="w-full bg-[#3B4953] hover:bg-[#5A7863] text-[#EBF4DD]"
+                    onClick={() => { setSelectedStation(station); setStationModalOpen(true); }}
                   >
                     <Zap className="w-4 h-4 mr-2" />
                     View Details & Connect
@@ -1138,10 +1139,15 @@ function StationDetailModal({
   onRefreshStations,
   onSessionComplete
 }: StationDetailModalProps) {
+  // Vaul needs false→true transition to open. Delay by one frame so Drawer mounts closed first.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { setDrawerOpen(isOpen); }, [isOpen]);
+
   const userPoints = userData?.points ? parseInt(userData.points) : 0;
   const [localUserPoints, setLocalUserPoints] = useState(userPoints);
   const [pointsToUse, setPointsToUse] = useState<number>(Math.min(10, Math.max(0, userPoints)));
   const [countdown, setCountdown] = useState<string>("");
+  const [isConnecting, setIsConnecting] = useState(false);
   const [localSessionActive, setLocalSessionActive] = useState(false);
   const [localSessionCompleted, setLocalSessionCompleted] = useState(false);
   const [localRemainingSeconds, setLocalRemainingSeconds] = useState<number | null>(null);
@@ -1286,20 +1292,25 @@ function StationDetailModal({
     }
 
     try {
+      setIsConnecting(true);
+      const clickedAt = Date.now();
+
       await onStartCharging(station.id, pointsToUse);
 
       const totalSeconds = pointsToUse * MINS_PER_POINT * 60;
+      const elapsedSec = Math.floor((Date.now() - clickedAt) / 1000);
+      const adjustedSeconds = Math.max(5, totalSeconds - elapsedSec);
+
       setLocalTotalSeconds(totalSeconds);
-      setLocalRemainingSeconds(totalSeconds);
+      setLocalRemainingSeconds(adjustedSeconds);
       setLocalSessionStartPoints(localUserPoints);
       setLocalSpentPoints(0);
       setLocalSessionActive(true);
       setLocalSessionCompleted(false);
-      toast.success("Charging started", {
-        description: "Please follow the safety rules below.",
-      });
     } catch {
       // The parent handler already shows the backend error message.
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -1312,8 +1323,43 @@ function StationDetailModal({
   const mapSrc = buildMapSrc(station, userLocation);
 
   return (
-    <Drawer open={isOpen} onOpenChange={(open) => !open && onClose()} direction="right">
+    <Drawer open={drawerOpen} onOpenChange={(open) => !open && onClose()} direction="right">
       <DrawerContent className="h-full !w-[min(1180px,calc(100vw-1rem))] overflow-hidden border-l border-border bg-background sm:!max-w-none">
+
+        {/* Connecting overlay — shown while waiting for startCharging API response */}
+        {isConnecting && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#F4F8ED] px-8">
+            <style>{`@keyframes bar-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}`}</style>
+            <div className="mb-8 text-center">
+              <div className="mb-3 text-4xl">⚡</div>
+              <h2 className="text-xl font-semibold text-[#3B4953]">Connecting to Station #{station?.id}</h2>
+              <p className="mt-1 text-sm text-[#5A7863]">Please follow the steps below while we connect</p>
+            </div>
+            <div className="w-full max-w-sm space-y-2.5 mb-10">
+              {[
+                "Open your vehicle's charging port",
+                "Connect the charging gun firmly to your vehicle",
+                "Ensure the cable is not tangled or obstructed",
+                "Wait here — charging will begin automatically",
+              ].map((step, i) => (
+                <div key={i} className="flex items-center gap-3 rounded-xl border border-[#90AB8B]/40 bg-white/70 px-4 py-3">
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#3B4953] text-xs font-bold text-white">{i + 1}</span>
+                  <span className="text-sm text-[#3B4953]">{step}</span>
+                </div>
+              ))}
+            </div>
+            <div className="w-full max-w-sm">
+              <p className="mb-2 text-center text-xs text-[#5A7863]">Establishing connection...</p>
+              <div className="relative h-2 overflow-hidden rounded-full bg-[#90AB8B]/25">
+                <div
+                  className="absolute top-0 h-full w-1/3 rounded-full bg-[#3B4953]"
+                  style={{ animation: 'bar-sweep 1.4s ease-in-out infinite' }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         <DrawerHeader className="border-b border-border px-4 py-3 lg:px-6 lg:py-5 text-left">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="lg:hidden shrink-0 rounded-xl p-1.5 text-[#3B4953] hover:bg-[#90AB8B]/25" aria-label="Back">

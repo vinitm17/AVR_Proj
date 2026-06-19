@@ -1,7 +1,7 @@
 import Router from "express"
 import { verifyJWT } from "../../middleware/auth.middleware"
 import { PrismaClient } from "@prisma/client"
-import { Request, Response } from "express"
+import { Response } from "express"
 import * as dotenv from "dotenv"
 import { userReq } from "../../middleware/auth.middleware"
 import { activeQueueWhere, reconcileChargingState } from "./station-state"
@@ -182,35 +182,39 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             })
         }
 
-        // Atomic claim + session create in one transaction — prevents two users
-        // from grabbing the same station if they both click at the same moment
-        const { newSession } = await prisma.$transaction(async (tx) => {
-            const claimed = await tx.chargingStation.updateMany({
-                where: { id: CID, isOccupied: false, isActive: true, isFaulty: false },
-                data: { isOccupied: true, connectedUserID: userId }
-            })
-            if (claimed.count === 0) {
-                throw Object.assign(new Error("Station was just taken by another user"), { code: "STATION_TAKEN" })
-            }
-            const newSession = await tx.sessions.create({
-                data: {
-                    userId: userId,
-                    stationId: CID,
-                    totalTime: "0",
-                    isActive: true,
-                    location: station.location,
-                    pointsUsed: customPoints ? customPoints : BigInt(0),
-                    estimatedDuration: estimatedDuration
-                }
-            })
-            if (customPoints) {
-                await tx.user.update({
-                    where: { id: userId },
-                    data: { points: user.points! - customPoints }
-                })
-            }
-            return { newSession }
+        // Step 1: atomic claim — single fast query, prevents two users grabbing same station
+        const claimed = await prisma.chargingStation.updateMany({
+            where: { id: CID, isOccupied: false, isActive: true, isFaulty: false },
+            data: { isOccupied: true, connectedUserID: userId }
         })
+        if (claimed.count === 0) {
+            return res.status(400).json({ msg: "Station is not available for charging" })
+        }
+
+        // Step 2: create session + deduct points (batch transaction, fast with pooled connections)
+        let newSession: any
+        try {
+            const txOps: any[] = [
+                prisma.sessions.create({
+                    data: {
+                        userId, stationId: CID, totalTime: "0", isActive: true,
+                        location: station.location,
+                        pointsUsed: customPoints ?? BigInt(0),
+                        estimatedDuration
+                    }
+                }),
+                ...(customPoints ? [prisma.user.update({ where: { id: userId }, data: { points: user.points! - customPoints } })] : [])
+            ]
+            const results = await prisma.$transaction(txOps)
+            newSession = results[0]
+        } catch (txErr) {
+            // Release claim if session creation failed
+            await prisma.chargingStation.updateMany({
+                where: { id: CID, connectedUserID: userId },
+                data: { isOccupied: false, connectedUserID: null }
+            }).catch(() => {})
+            throw txErr
+        }
 
         // Remove user from queue if they were in it
         await prisma.stationQueue.deleteMany({
@@ -243,12 +247,9 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             }
         })
 
-        notifyHardware('start', CID).catch(() => {})
+        notifyHardware('start', CID, userId).catch(() => {})
 
     } catch (e: any) {
-        if (e?.code === "STATION_TAKEN") {
-            return res.status(400).json({ msg: "Station was just taken by another user. Please try again." })
-        }
         console.error("error starting charging session: " + e)
         res.status(500).json({
             msg: "Failed to start charging session"

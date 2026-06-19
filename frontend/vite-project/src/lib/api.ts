@@ -5,7 +5,7 @@ const apiInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // 10 second timeout
+  timeout: 30000, // 30s — covers Neon serverless cold start (~10-20s)
 });
 
 apiInstance.interceptors.request.use(
