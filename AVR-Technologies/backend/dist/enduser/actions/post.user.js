@@ -254,6 +254,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, async
                 pointsAllocated: customPoints ? customPoints.toString() : null
             }
         });
+        (0, post_hw_1.setP13)(CID, 1);
         (0, post_hw_1.notifyHardware)('start', CID, userId).catch(() => { });
     }
     catch (e) {
@@ -358,6 +359,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, async 
                     status: "NOTIFIED"
                 }
             });
+            (0, post_hw_1.setP13)(CID, 0);
             (0, post_hw_1.notifyHardware)('stop', CID).catch(() => { });
             res.json({
                 msg: "Charging session stopped successfully",
@@ -409,6 +411,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, async 
                 status: "NOTIFIED"
             }
         });
+        (0, post_hw_1.setP13)(CID, 0);
         (0, post_hw_1.notifyHardware)('stop', CID).catch(() => { });
         res.json({
             msg: "Charging session stopped successfully",

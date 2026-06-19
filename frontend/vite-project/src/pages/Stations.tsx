@@ -1252,6 +1252,7 @@ function StationDetailModal({
       toast.success("Charging session completed", {
         description: "Saved to history",
       });
+      onStopCharging(station!.id);
       onSessionComplete(station!.id);
       onRefreshStations();
     }

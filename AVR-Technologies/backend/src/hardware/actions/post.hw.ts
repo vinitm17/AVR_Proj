@@ -10,22 +10,35 @@ const prisma = new PrismaClient();
 // Point mapping — single source of truth for p1-p12 semantics
 // ---------------------------------------------------------------------------
 export const POINT_MAP = {
-    p1:  { name: "Charger ID",           shortName: "CID"                                           },
-    p2:  { name: "Reseller ID",          shortName: "RID"                                           },
-    p3:  { name: "Operator ID",          shortName: "OID"                                           },
-    p4:  { name: "User ID",              shortName: "UID"                                           },
-    p5:  { name: "Point Balance"                                                                     },
-    p6:  { name: "Session Start Time",   format: "Epoch"                                            },
-    p7:  { name: "Real Time Power",      unit: "Watts"                                              },
-    p8:  { name: "Session Status",       values: { 0: "Idle", 1: "Start", 2: "Charging", 3: "End" }},
-    p9:  { name: "Session End Time",     format: "Epoch"                                            },
-    p10: { name: "Total Points Consumed"                                                             },
-    p11: { name: "Session Duration",     unit: "Seconds"                                            },
-    p12: { name: "Energy Consumed",      unit: "Wh"                                                 },
+    p1:  { name: "Charger ID",           shortName: "CID"                                  },
+    p2:  { name: "Reseller ID",          shortName: "RID"                                  },
+    p3:  { name: "Operator ID",          shortName: "OID"                                  },
+    p4:  { name: "User ID",              shortName: "UID"                                  },
+    p5:  { name: "Point Balance"                                                            },
+    p6:  { name: "Session Start Time",   format: "Epoch"                                   },
+    p7:  { name: "Real Time Power",      unit: "Watts"                                     },
+    p8:  { name: "Session Status",       values: { 0: "Idle", 1: "Charging", 2: "End" }   },
+    p9:  { name: "Session End Time",     format: "Epoch"                                   },
+    p10: { name: "Total Points Consumed"                                                    },
+    p11: { name: "Session Duration",     unit: "Seconds"                                   },
+    p12: { name: "Energy Consumed",      unit: "Wh"                                        },
+    p13: { name: "Charge Command",       values: { 0: "Stop/Idle", 1: "Start Charging" }  },
 } as const;
 
-// p8 status codes
-const HW_STATUS = { IDLE: 0, START: 1, CHARGING: 2, END: 3 } as const;
+// p8 status codes sent BY hardware
+const HW_STATUS = { IDLE: 0, CHARGING: 1, END: 2 } as const;
+
+// ---------------------------------------------------------------------------
+// p13 command store — what WE tell hardware to do per station
+// 0 = stop/idle, 1 = start charging
+// Set by startCharging / stopCharging routes, read on every hardware poll
+// ---------------------------------------------------------------------------
+const stationP13 = new Map<number, number>();
+
+export function setP13(stationId: number, value: 0 | 1): void {
+    stationP13.set(stationId, value);
+    console.log(`[HW] p13 command for station ${stationId} set to ${value}`);
+}
 
 // ---------------------------------------------------------------------------
 // Outbound — our backend calls hardware (fire and forget from startCharging/stopCharging)
@@ -67,7 +80,7 @@ export async function notifyHardware(
         // p7  — Real Time Power (Watts) — unknown from our side
         p7:  0,
         // p8  — Session Status
-        p8:  action === 'start' ? HW_STATUS.START : HW_STATUS.END,
+        p8:  action === 'start' ? HW_STATUS.CHARGING : HW_STATUS.END,
         // p9  — Session End Time (Epoch), only on stop
         p9:  action === 'stop' ? nowEpoch : 0,
         // p10 — Total Points Consumed
@@ -211,7 +224,7 @@ postHwRouter.post("/data", async (req: any, res: Response) => {
 
         // --- Session lifecycle based on p8 ---
 
-        if (status === HW_STATUS.START && userId) {
+        if (status === HW_STATUS.CHARGING && userId) {
             // Hardware says: user started charging. Create session if none exists.
             const existing = await prisma.sessions.findFirst({ where: { stationId, isActive: true } });
             if (!existing) {
@@ -284,19 +297,61 @@ postHwRouter.post("/data", async (req: any, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /hw/data?stationId=X  — hardware polls our current state
+// GET /hw/data?stationId=X&p8=Y  — hardware polls our state
+// Hardware sends its current p8 status; we respond with p1-p13 command
 // ---------------------------------------------------------------------------
 postHwRouter.get("/data", async (req: any, res: Response) => {
     if (!checkHwApiKey(req, res)) return;
     try {
         const stationId = req.query.stationId ? Number(req.query.stationId) : null;
+        const incomingP8 = req.query.p8 !== undefined ? Number(req.query.p8) : null;
+
         if (!stationId) {
             const all: Record<number, HardwareReading> = {};
             latestHwReadings.forEach((v, k) => { all[k] = v; });
             return res.json({ readings: all });
         }
-        const response = await buildResponsePayload(stationId);
-        return res.json({ ...response, lastHwReading: latestHwReadings.get(stationId) ?? null });
+
+        // Process hardware's reported p8 status
+        if (incomingP8 !== null) {
+            console.log(`[HW poll] station ${stationId} p8=${incomingP8}`);
+
+            if (incomingP8 === HW_STATUS.CHARGING) {
+                // Hardware confirmed charging started — session already in DB via startCharging
+                console.log(`[HW] Station ${stationId} confirmed charging`);
+            }
+
+            if (incomingP8 === HW_STATUS.END) {
+                // Hardware says charging ended — close session if still open
+                const activeSession = await prisma.sessions.findFirst({
+                    where: { stationId, isActive: true },
+                    orderBy: { createdAt: 'desc' },
+                    include: { User: true }
+                });
+                if (activeSession) {
+                    const nowEpoch = Math.floor(Date.now() / 1000);
+                    const startEpoch = Math.floor(new Date(activeSession.createdAt).getTime() / 1000);
+                    const totalMinutes = Math.max(1, Math.ceil((nowEpoch - startEpoch) / 60));
+                    await prisma.$transaction([
+                        prisma.sessions.update({
+                            where: { id: activeSession.id },
+                            data: { isActive: false, totalTime: `${totalMinutes} min` }
+                        }),
+                        prisma.chargingStation.update({
+                            where: { id: stationId },
+                            data: { isOccupied: false, connectedUserID: null }
+                        }),
+                    ]);
+                    stationP13.set(stationId, 0);
+                    console.log(`[HW] Station ${stationId} session closed by hardware p8=2`);
+                }
+            }
+        }
+
+        const p13 = stationP13.get(stationId) ?? 0;
+        const payload = await buildResponsePayload(stationId);
+        return res.json({ stationId, ...payload, p13 });
+
     } catch (e) {
         console.error("[HW get error]", e);
         res.status(500).json({ msg: "Internal server error" });

@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.postHwRouter = exports.POINT_MAP = void 0;
+exports.setP13 = setP13;
 exports.notifyHardware = notifyHardware;
 const express_1 = require("express");
 const client_1 = require("@prisma/client");
@@ -51,14 +52,25 @@ exports.POINT_MAP = {
     p5: { name: "Point Balance" },
     p6: { name: "Session Start Time", format: "Epoch" },
     p7: { name: "Real Time Power", unit: "Watts" },
-    p8: { name: "Session Status", values: { 0: "Idle", 1: "Start", 2: "Charging", 3: "End" } },
+    p8: { name: "Session Status", values: { 0: "Idle", 1: "Charging", 2: "End" } },
     p9: { name: "Session End Time", format: "Epoch" },
     p10: { name: "Total Points Consumed" },
     p11: { name: "Session Duration", unit: "Seconds" },
     p12: { name: "Energy Consumed", unit: "Wh" },
+    p13: { name: "Charge Command", values: { 0: "Stop/Idle", 1: "Start Charging" } },
 };
-// p8 status codes
-const HW_STATUS = { IDLE: 0, START: 1, CHARGING: 2, END: 3 };
+// p8 status codes sent BY hardware
+const HW_STATUS = { IDLE: 0, CHARGING: 1, END: 2 };
+// ---------------------------------------------------------------------------
+// p13 command store — what WE tell hardware to do per station
+// 0 = stop/idle, 1 = start charging
+// Set by startCharging / stopCharging routes, read on every hardware poll
+// ---------------------------------------------------------------------------
+const stationP13 = new Map();
+function setP13(stationId, value) {
+    stationP13.set(stationId, value);
+    console.log(`[HW] p13 command for station ${stationId} set to ${value}`);
+}
 // ---------------------------------------------------------------------------
 // Outbound — our backend calls hardware (fire and forget from startCharging/stopCharging)
 // ---------------------------------------------------------------------------
@@ -92,7 +104,7 @@ async function notifyHardware(action, stationId, userId) {
         // p7  — Real Time Power (Watts) — unknown from our side
         p7: 0,
         // p8  — Session Status
-        p8: action === 'start' ? HW_STATUS.START : HW_STATUS.END,
+        p8: action === 'start' ? HW_STATUS.CHARGING : HW_STATUS.END,
         // p9  — Session End Time (Epoch), only on stop
         p9: action === 'stop' ? nowEpoch : 0,
         // p10 — Total Points Consumed
@@ -206,7 +218,7 @@ exports.postHwRouter.post("/data", async (req, res) => {
         });
         console.log(`[HW inbound] station ${stationId} status=${status} (${exports.POINT_MAP.p8.values[status] ?? 'Unknown'}) uid=${userId}`);
         // --- Session lifecycle based on p8 ---
-        if (status === HW_STATUS.START && userId) {
+        if (status === HW_STATUS.CHARGING && userId) {
             // Hardware says: user started charging. Create session if none exists.
             const existing = await prisma.sessions.findFirst({ where: { stationId, isActive: true } });
             if (!existing) {
@@ -275,20 +287,56 @@ exports.postHwRouter.post("/data", async (req, res) => {
     }
 });
 // ---------------------------------------------------------------------------
-// GET /hw/data?stationId=X  — hardware polls our current state
+// GET /hw/data?stationId=X&p8=Y  — hardware polls our state
+// Hardware sends its current p8 status; we respond with p1-p13 command
 // ---------------------------------------------------------------------------
 exports.postHwRouter.get("/data", async (req, res) => {
     if (!checkHwApiKey(req, res))
         return;
     try {
         const stationId = req.query.stationId ? Number(req.query.stationId) : null;
+        const incomingP8 = req.query.p8 !== undefined ? Number(req.query.p8) : null;
         if (!stationId) {
             const all = {};
             latestHwReadings.forEach((v, k) => { all[k] = v; });
             return res.json({ readings: all });
         }
-        const response = await buildResponsePayload(stationId);
-        return res.json({ ...response, lastHwReading: latestHwReadings.get(stationId) ?? null });
+        // Process hardware's reported p8 status
+        if (incomingP8 !== null) {
+            console.log(`[HW poll] station ${stationId} p8=${incomingP8}`);
+            if (incomingP8 === HW_STATUS.CHARGING) {
+                // Hardware confirmed charging started — session already in DB via startCharging
+                console.log(`[HW] Station ${stationId} confirmed charging`);
+            }
+            if (incomingP8 === HW_STATUS.END) {
+                // Hardware says charging ended — close session if still open
+                const activeSession = await prisma.sessions.findFirst({
+                    where: { stationId, isActive: true },
+                    orderBy: { createdAt: 'desc' },
+                    include: { User: true }
+                });
+                if (activeSession) {
+                    const nowEpoch = Math.floor(Date.now() / 1000);
+                    const startEpoch = Math.floor(new Date(activeSession.createdAt).getTime() / 1000);
+                    const totalMinutes = Math.max(1, Math.ceil((nowEpoch - startEpoch) / 60));
+                    await prisma.$transaction([
+                        prisma.sessions.update({
+                            where: { id: activeSession.id },
+                            data: { isActive: false, totalTime: `${totalMinutes} min` }
+                        }),
+                        prisma.chargingStation.update({
+                            where: { id: stationId },
+                            data: { isOccupied: false, connectedUserID: null }
+                        }),
+                    ]);
+                    stationP13.set(stationId, 0);
+                    console.log(`[HW] Station ${stationId} session closed by hardware p8=2`);
+                }
+            }
+        }
+        const p13 = stationP13.get(stationId) ?? 0;
+        const payload = await buildResponsePayload(stationId);
+        return res.json({ stationId, ...payload, p13 });
     }
     catch (e) {
         console.error("[HW get error]", e);

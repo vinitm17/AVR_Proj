@@ -5,7 +5,7 @@ import { Response } from "express"
 import * as dotenv from "dotenv"
 import { userReq } from "../../middleware/auth.middleware"
 import { activeQueueWhere, reconcileChargingState } from "./station-state"
-import { notifyHardware } from "../../hardware/actions/post.hw"
+import { notifyHardware, setP13 } from "../../hardware/actions/post.hw"
 
 dotenv.config()
 const MINS_PER_POINT = parseInt(process.env.MINS_PER_POINT || "5", 10)
@@ -247,6 +247,7 @@ postUserRouter.post("/startCharging", verifyJWT, async (req: userReq, res: Respo
             }
         })
 
+        setP13(CID, 1)
         notifyHardware('start', CID, userId).catch(() => {})
 
     } catch (e: any) {
@@ -367,7 +368,8 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
                 }
             });
 
-            notifyHardware('stop', CID).catch(() => {})
+            setP13(CID, 0)
+        notifyHardware('stop', CID).catch(() => {})
             res.json({
                 msg: "Charging session stopped successfully",
                 sessionId: session.id,
@@ -424,6 +426,7 @@ postUserRouter.post("/stopCharging", verifyJWT, async (req: userReq, res: Respon
             }
         })
 
+        setP13(CID, 0)
         notifyHardware('stop', CID).catch(() => {})
         res.json({
             msg: "Charging session stopped successfully",
