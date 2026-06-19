@@ -1,13 +1,4 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getOperatorDashboardRouter = void 0;
 const express_1 = require("express");
@@ -16,7 +7,7 @@ const auth_middleware_1 = require("../../middleware/auth.middleware");
 exports.getOperatorDashboardRouter = (0, express_1.Router)();
 const prisma = new client_1.PrismaClient();
 // This endpoint will only work for Operator role users
-exports.getOperatorDashboardRouter.get("/operator-dashboard", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+exports.getOperatorDashboardRouter.get("/operator-dashboard", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const userId = req.id;
         const userRole = req.role;
@@ -32,7 +23,7 @@ exports.getOperatorDashboardRouter.get("/operator-dashboard", auth_middleware_1.
             });
         }
         // Get the stations operated by this operator
-        const operatedStations = yield prisma.chargingStation.findMany({
+        const operatedStations = await prisma.chargingStation.findMany({
             where: {
                 operatorId: userId
             },
@@ -67,14 +58,14 @@ exports.getOperatorDashboardRouter.get("/operator-dashboard", auth_middleware_1.
             }
         });
         // Calculate revenue metrics (using a simplified calculation)
-        const totalSessions = yield prisma.sessions.count({
+        const totalSessions = await prisma.sessions.count({
             where: {
                 stationId: {
                     in: operatedStations.map(station => station.id)
                 }
             }
         });
-        const totalPoints = yield prisma.sessions.aggregate({
+        const totalPoints = await prisma.sessions.aggregate({
             where: {
                 stationId: {
                     in: operatedStations.map(station => station.id)
@@ -118,4 +109,4 @@ exports.getOperatorDashboardRouter.get("/operator-dashboard", auth_middleware_1.
             msg: "Internal server error"
         });
     }
-}));
+});

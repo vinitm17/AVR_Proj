@@ -1,13 +1,4 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.postQueueRouter = void 0;
 const express_1 = require("express");
@@ -17,7 +8,7 @@ const station_state_1 = require("./station-state");
 exports.postQueueRouter = (0, express_1.Router)();
 const prisma = new client_1.PrismaClient();
 // Join queue for a station
-exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const userId = req.id;
         const { CID } = req.body;
@@ -27,15 +18,18 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
         if (!CID) {
             return res.status(400).json({ msg: "Station ID (CID) is required" });
         }
-        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
-        const station = yield prisma.chargingStation.findUnique({
+        await (0, station_state_1.reconcileChargingState)(prisma, CID);
+        const station = await prisma.chargingStation.findUnique({
             where: { id: CID }
         });
         if (!station) {
             return res.status(404).json({ msg: "Station not found" });
         }
-        const activeQueue = yield prisma.stationQueue.findMany({
-            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
+        const activeQueue = await prisma.stationQueue.findMany({
+            where: {
+                stationId: CID,
+                ...station_state_1.activeQueueWhere
+            },
             orderBy: { position: 'asc' }
         });
         if (!station.isOccupied && activeQueue.length === 0) {
@@ -44,7 +38,7 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
             });
         }
         // Check if user is already in queue for this station
-        const existingEntry = yield prisma.stationQueue.findUnique({
+        const existingEntry = await prisma.stationQueue.findUnique({
             where: {
                 stationId_userId: {
                     stationId: CID,
@@ -63,17 +57,20 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
         }
         // If user had a cancelled entry, remove it first
         if (existingEntry) {
-            yield prisma.stationQueue.delete({
+            await prisma.stationQueue.delete({
                 where: { id: existingEntry.id }
             });
         }
         // Get current max position for this station
-        const maxPosition = yield prisma.stationQueue.aggregate({
-            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
+        const maxPosition = await prisma.stationQueue.aggregate({
+            where: {
+                stationId: CID,
+                ...station_state_1.activeQueueWhere
+            },
             _max: { position: true }
         });
         const newPosition = (maxPosition._max.position || 0) + 1;
-        const queueEntry = yield prisma.stationQueue.create({
+        const queueEntry = await prisma.stationQueue.create({
             data: {
                 stationId: CID,
                 userId: userId,
@@ -82,7 +79,7 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
             }
         });
         // Get active session for estimated wait time
-        const activeSession = yield prisma.sessions.findFirst({
+        const activeSession = await prisma.sessions.findFirst({
             where: {
                 stationId: CID,
                 isActive: true
@@ -90,7 +87,7 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
             orderBy: { createdAt: 'desc' }
         });
         let estimatedWaitMinutes = null;
-        if (activeSession === null || activeSession === void 0 ? void 0 : activeSession.estimatedDuration) {
+        if (activeSession?.estimatedDuration) {
             const elapsed = Math.floor((Date.now() - activeSession.createdAt.getTime()) / 60000);
             const stationFreeIn = Math.max(0, activeSession.estimatedDuration - elapsed);
             // Each person ahead adds ~15 min average (rough estimate)
@@ -110,9 +107,9 @@ exports.postQueueRouter.post("/joinQueue", auth_middleware_1.verifyJWT, (req, re
         console.error("Error joining queue: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
+});
 // Leave queue for a station
-exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const userId = req.id;
         const { CID } = req.body;
@@ -122,8 +119,8 @@ exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, (req, r
         if (!CID) {
             return res.status(400).json({ msg: "Station ID (CID) is required" });
         }
-        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
-        const queueEntry = yield prisma.stationQueue.findUnique({
+        await (0, station_state_1.reconcileChargingState)(prisma, CID);
+        const queueEntry = await prisma.stationQueue.findUnique({
             where: {
                 stationId_userId: {
                     stationId: CID,
@@ -135,16 +132,19 @@ exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, (req, r
             return res.status(404).json({ msg: "You are not in the queue for this station" });
         }
         // Delete the entry
-        yield prisma.stationQueue.delete({
+        await prisma.stationQueue.delete({
             where: { id: queueEntry.id }
         });
         // Recalculate positions for remaining queue members
-        const remainingQueue = yield prisma.stationQueue.findMany({
-            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
+        const remainingQueue = await prisma.stationQueue.findMany({
+            where: {
+                stationId: CID,
+                ...station_state_1.activeQueueWhere
+            },
             orderBy: { position: 'asc' }
         });
         for (let i = 0; i < remainingQueue.length; i++) {
-            yield prisma.stationQueue.update({
+            await prisma.stationQueue.update({
                 where: { id: remainingQueue[i].id },
                 data: { position: i + 1 }
             });
@@ -152,7 +152,7 @@ exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, (req, r
         // If position 1 was removed and there are still people in queue, 
         // notify the new position 1
         if (queueEntry.position === 1 && remainingQueue.length > 0) {
-            yield prisma.stationQueue.update({
+            await prisma.stationQueue.update({
                 where: { id: remainingQueue[0].id },
                 data: { status: "NOTIFIED" }
             });
@@ -167,4 +167,4 @@ exports.postQueueRouter.post("/leaveQueue", auth_middleware_1.verifyJWT, (req, r
         console.error("Error leaving queue: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
+});

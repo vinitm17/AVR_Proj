@@ -1,13 +1,4 @@
 "use strict";
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.operatorAdminRouter = void 0;
 const express_1 = require("express");
@@ -26,7 +17,7 @@ const requireOperator = (req, res) => {
     }
     return req.id;
 };
-exports.operatorAdminRouter.post("/station/add", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+exports.operatorAdminRouter.post("/station/add", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const operatorId = requireOperator(req, res);
         if (!operatorId)
@@ -37,7 +28,7 @@ exports.operatorAdminRouter.post("/station/add", auth_middleware_1.verifyJWT, (r
                 msg: "location, OEMId, and resellerId are required"
             });
         }
-        const [oem, reseller] = yield Promise.all([
+        const [oem, reseller] = await Promise.all([
             prisma.user.findUnique({ where: { id: Number(OEMId) } }),
             prisma.user.findUnique({ where: { id: Number(resellerId) } })
         ]);
@@ -47,17 +38,17 @@ exports.operatorAdminRouter.post("/station/add", auth_middleware_1.verifyJWT, (r
         if (!reseller || reseller.role !== client_1.Role.Reseller) {
             return res.status(400).json({ msg: "resellerId must reference a Reseller user" });
         }
-        const station = yield prisma.chargingStation.create({
+        const station = await prisma.chargingStation.create({
             data: {
                 location: String(location),
                 OEMId: Number(OEMId),
                 resellerId: Number(resellerId),
                 operatorId: Number(operatorIdOverride || operatorId),
-                totalEnergyConsumption: BigInt(totalEnergyConsumption !== null && totalEnergyConsumption !== void 0 ? totalEnergyConsumption : 0),
-                healthPercentage: Number(healthPercentage !== null && healthPercentage !== void 0 ? healthPercentage : 100),
+                totalEnergyConsumption: BigInt(totalEnergyConsumption ?? 0),
+                healthPercentage: Number(healthPercentage ?? 100),
                 isOccupied: false,
-                isActive: Boolean(isActive !== null && isActive !== void 0 ? isActive : true),
-                isFaulty: Boolean(isFaulty !== null && isFaulty !== void 0 ? isFaulty : false)
+                isActive: Boolean(isActive ?? true),
+                isFaulty: Boolean(isFaulty ?? false)
             }
         });
         return res.json({
@@ -69,8 +60,8 @@ exports.operatorAdminRouter.post("/station/add", auth_middleware_1.verifyJWT, (r
         console.error("Error creating station: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
-exports.operatorAdminRouter.post("/station/remove", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.operatorAdminRouter.post("/station/remove", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const operatorId = requireOperator(req, res);
         if (!operatorId)
@@ -79,7 +70,7 @@ exports.operatorAdminRouter.post("/station/remove", auth_middleware_1.verifyJWT,
         if (!stationId) {
             return res.status(400).json({ msg: "stationId is required" });
         }
-        const station = yield prisma.chargingStation.findUnique({
+        const station = await prisma.chargingStation.findUnique({
             where: { id: Number(stationId) }
         });
         if (!station) {
@@ -88,15 +79,15 @@ exports.operatorAdminRouter.post("/station/remove", auth_middleware_1.verifyJWT,
         if (station.operatorId !== operatorId) {
             return res.status(403).json({ msg: "You can only remove stations you operate" });
         }
-        yield prisma.chargingStation.delete({ where: { id: Number(stationId) } });
+        await prisma.chargingStation.delete({ where: { id: Number(stationId) } });
         return res.json({ msg: "Station removed successfully" });
     }
     catch (e) {
         console.error("Error removing station: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
-exports.operatorAdminRouter.post("/station/update", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.operatorAdminRouter.post("/station/update", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const operatorId = requireOperator(req, res);
         if (!operatorId)
@@ -105,7 +96,7 @@ exports.operatorAdminRouter.post("/station/update", auth_middleware_1.verifyJWT,
         if (!stationId) {
             return res.status(400).json({ msg: "stationId is required" });
         }
-        const station = yield prisma.chargingStation.findUnique({
+        const station = await prisma.chargingStation.findUnique({
             where: { id: Number(stationId) }
         });
         if (!station) {
@@ -114,7 +105,7 @@ exports.operatorAdminRouter.post("/station/update", auth_middleware_1.verifyJWT,
         if (station.operatorId !== operatorId) {
             return res.status(403).json({ msg: "You can only update stations you operate" });
         }
-        const updated = yield prisma.chargingStation.update({
+        const updated = await prisma.chargingStation.update({
             where: { id: Number(stationId) },
             data: {
                 isActive: typeof isActive === "boolean" ? isActive : station.isActive,
@@ -136,13 +127,13 @@ exports.operatorAdminRouter.post("/station/update", auth_middleware_1.verifyJWT,
         console.error("Error updating station: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
-exports.operatorAdminRouter.get("/station-analytics", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.operatorAdminRouter.get("/station-analytics", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const operatorId = requireOperator(req, res);
         if (!operatorId)
             return;
-        const stations = yield prisma.chargingStation.findMany({
+        const stations = await prisma.chargingStation.findMany({
             where: { operatorId: operatorId },
             select: { id: true }
         });
@@ -153,7 +144,7 @@ exports.operatorAdminRouter.get("/station-analytics", auth_middleware_1.verifyJW
                 analytics: []
             });
         }
-        const sessions = yield prisma.sessions.findMany({
+        const sessions = await prisma.sessions.findMany({
             where: { stationId: { in: stationIds } },
             select: { stationId: true, pointsUsed: true, energyConsumption: true }
         });
@@ -183,13 +174,13 @@ exports.operatorAdminRouter.get("/station-analytics", auth_middleware_1.verifyJW
         console.error("Error fetching station analytics: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
-exports.operatorAdminRouter.get("/users", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.operatorAdminRouter.get("/users", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const operatorId = requireOperator(req, res);
         if (!operatorId)
             return;
-        const users = yield prisma.user.findMany({
+        const users = await prisma.user.findMany({
             select: {
                 id: true,
                 firstName: true,
@@ -225,4 +216,4 @@ exports.operatorAdminRouter.get("/users", auth_middleware_1.verifyJWT, (req, res
         console.error("Error fetching users: " + e);
         return res.status(500).json({ msg: "Internal server error" });
     }
-}));
+});

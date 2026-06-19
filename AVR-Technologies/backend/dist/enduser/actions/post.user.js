@@ -32,15 +32,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -57,8 +48,7 @@ const MINS_PER_POINT = parseInt(process.env.MINS_PER_POINT || "5", 10);
 const MAX_SESSION_MINUTES = 480;
 exports.postUserRouter = (0, express_1.default)();
 const prisma = new client_1.PrismaClient();
-exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const { CID } = req.body;
         const userId = req.id;
@@ -67,8 +57,8 @@ exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) =
                 msg: "User not authenticated"
             });
         }
-        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
-        const chargingStation = yield prisma.chargingStation.findUnique({
+        await (0, station_state_1.reconcileChargingState)(prisma, CID);
+        const chargingStation = await prisma.chargingStation.findUnique({
             where: {
                 id: CID
             },
@@ -90,7 +80,7 @@ exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) =
                 }
             });
         }
-        const user = yield prisma.user.findUnique({
+        const user = await prisma.user.findUnique({
             where: {
                 id: userId
             }
@@ -110,7 +100,7 @@ exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) =
             },
             user: {
                 id: user.id,
-                points: (_a = user.points) === null || _a === void 0 ? void 0 : _a.toString(),
+                points: user.points?.toString(),
                 canStartCharging: user.points && user.points > 0
             }
         });
@@ -121,8 +111,8 @@ exports.postUserRouter.post("/scanQR", auth_middleware_1.verifyJWT, (req, res) =
             msg: "Internal server error"
         });
     }
-}));
-exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const { CID, points } = req.body;
         const userId = req.id;
@@ -133,8 +123,8 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
             });
         }
         // Per-station reconcile only — reconciling all stations is O(N) and causes Axios timeouts
-        yield (0, station_state_1.reconcileChargingState)(prisma, CID);
-        const [user, station] = yield Promise.all([
+        await (0, station_state_1.reconcileChargingState)(prisma, CID);
+        const [user, station] = await Promise.all([
             prisma.user.findUnique({ where: { id: userId } }),
             prisma.chargingStation.findUnique({ where: { id: CID } })
         ]);
@@ -154,7 +144,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 msg: "Insufficient coins for requested charging amount"
             });
         }
-        const existingActiveSession = yield prisma.sessions.findFirst({
+        const existingActiveSession = await prisma.sessions.findFirst({
             where: {
                 userId,
                 isActive: true
@@ -177,8 +167,11 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
             });
         }
         // Check queue - if there's a queue, only position 1 can start
-        const queueEntries = yield prisma.stationQueue.findMany({
-            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
+        const queueEntries = await prisma.stationQueue.findMany({
+            where: {
+                stationId: CID,
+                ...station_state_1.activeQueueWhere
+            },
             orderBy: { position: 'asc' }
         });
         if (queueEntries.length > 0) {
@@ -189,7 +182,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                     msg: userQueueEntry
                         ? `You are position #${userQueueEntry.position} in queue. Only position #1 can start charging.`
                         : "Other users are queued for this station. Please join the queue first.",
-                    queuePosition: (userQueueEntry === null || userQueueEntry === void 0 ? void 0 : userQueueEntry.position) || null
+                    queuePosition: userQueueEntry?.position || null
                 });
             }
         }
@@ -202,15 +195,15 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
         }
         // Atomic claim + session create in one transaction — prevents two users
         // from grabbing the same station if they both click at the same moment
-        const { newSession } = yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-            const claimed = yield tx.chargingStation.updateMany({
+        const { newSession } = await prisma.$transaction(async (tx) => {
+            const claimed = await tx.chargingStation.updateMany({
                 where: { id: CID, isOccupied: false, isActive: true, isFaulty: false },
                 data: { isOccupied: true, connectedUserID: userId }
             });
             if (claimed.count === 0) {
                 throw Object.assign(new Error("Station was just taken by another user"), { code: "STATION_TAKEN" });
             }
-            const newSession = yield tx.sessions.create({
+            const newSession = await tx.sessions.create({
                 data: {
                     userId: userId,
                     stationId: CID,
@@ -222,27 +215,27 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
                 }
             });
             if (customPoints) {
-                yield tx.user.update({
+                await tx.user.update({
                     where: { id: userId },
                     data: { points: user.points - customPoints }
                 });
             }
             return { newSession };
-        }));
+        });
         // Remove user from queue if they were in it
-        yield prisma.stationQueue.deleteMany({
+        await prisma.stationQueue.deleteMany({
             where: {
                 stationId: CID,
                 userId: userId
             }
         });
         // Recalculate queue positions
-        const remainingQueue = yield prisma.stationQueue.findMany({
-            where: Object.assign({ stationId: CID }, station_state_1.activeQueueWhere),
+        const remainingQueue = await prisma.stationQueue.findMany({
+            where: { stationId: CID, ...station_state_1.activeQueueWhere },
             orderBy: { position: 'asc' }
         });
         for (let i = 0; i < remainingQueue.length; i++) {
-            yield prisma.stationQueue.update({
+            await prisma.stationQueue.update({
                 where: { id: remainingQueue[i].id },
                 data: { position: i + 1, status: "WAITING" }
             });
@@ -260,7 +253,7 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
         (0, post_hw_1.notifyHardware)('start', CID).catch(() => { });
     }
     catch (e) {
-        if ((e === null || e === void 0 ? void 0 : e.code) === "STATION_TAKEN") {
+        if (e?.code === "STATION_TAKEN") {
             return res.status(400).json({ msg: "Station was just taken by another user. Please try again." });
         }
         console.error("error starting charging session: " + e);
@@ -268,8 +261,8 @@ exports.postUserRouter.post("/startCharging", auth_middleware_1.verifyJWT, (req,
             msg: "Failed to start charging session"
         });
     }
-}));
-exports.postUserRouter.post("/addPoints", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.postUserRouter.post("/addPoints", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const userId = req.id;
         const { points } = req.body;
@@ -280,7 +273,7 @@ exports.postUserRouter.post("/addPoints", auth_middleware_1.verifyJWT, (req, res
         if (!Number.isInteger(pointsToAdd) || pointsToAdd <= 0) {
             return res.status(400).json({ msg: "Enter a valid points amount" });
         }
-        const updatedUser = yield prisma.user.update({
+        const updatedUser = await prisma.user.update({
             where: { id: userId },
             data: {
                 points: {
@@ -302,15 +295,15 @@ exports.postUserRouter.post("/addPoints", auth_middleware_1.verifyJWT, (req, res
             msg: "Failed to add points"
         });
     }
-}));
-exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+});
+exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, async (req, res) => {
     try {
         const userId = req.id;
         const { CID } = req.body;
         if (!userId) {
             return res.status(401).json({ msg: "User not authenticated" });
         }
-        const session = yield prisma.sessions.findFirst({
+        const session = await prisma.sessions.findFirst({
             where: {
                 userId: userId,
                 stationId: CID,
@@ -323,7 +316,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
         if (!session) {
             return res.status(404).json({ msg: "No active session found for this user and station" });
         }
-        const station = yield prisma.chargingStation.findUnique({
+        const station = await prisma.chargingStation.findUnique({
             where: { id: CID }
         });
         if (!station) {
@@ -337,7 +330,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
         // we don't need to deduct points again
         if (session.pointsUsed > BigInt(0)) {
             // Session already has points allocated, just mark it as complete
-            yield prisma.$transaction([
+            await prisma.$transaction([
                 prisma.sessions.update({
                     where: { id: session.id },
                     data: {
@@ -354,7 +347,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
                 })
             ]);
             // Notify first person in queue
-            yield prisma.stationQueue.updateMany({
+            await prisma.stationQueue.updateMany({
                 where: {
                     stationId: CID,
                     status: "WAITING",
@@ -373,7 +366,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
             });
             return;
         }
-        const user = yield prisma.user.findUnique({ where: { id: userId } });
+        const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user || !user.points) {
             return res.status(400).json({ msg: "User not found or has no points" });
         }
@@ -381,7 +374,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
         const coinsUsed = BigInt(Math.max(1, Math.ceil(totalMinutes / MINS_PER_POINT)));
         // Check if user has sufficient points, if not, use all remaining points
         const actualCoinsUsed = user.points >= coinsUsed ? coinsUsed : user.points;
-        yield prisma.$transaction([
+        await prisma.$transaction([
             prisma.sessions.update({
                 where: { id: session.id },
                 data: {
@@ -405,7 +398,7 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
             })
         ]);
         // Notify first person in queue
-        yield prisma.stationQueue.updateMany({
+        await prisma.stationQueue.updateMany({
             where: {
                 stationId: CID,
                 status: "WAITING",
@@ -429,4 +422,4 @@ exports.postUserRouter.post("/stopCharging", auth_middleware_1.verifyJWT, (req, 
             msg: "Failed to stop charging session"
         });
     }
-}));
+});
